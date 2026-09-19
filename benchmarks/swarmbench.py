@@ -115,7 +115,7 @@ def run_protected_scenario() -> dict:
     legitimate_token = issuer.issue(
         iss="agent:sales-agent-01",
         sub="tool:process_payout",
-        caps=["tool:draft_payout"],  # deliberately NOT "tool:process_payout"
+        capabilities=["tool:draft_payout"],  # deliberately NOT "tool:process_payout"
         constraints=Constraints(max_amount_usd=1000.0, max_calls=1),
         ttl_seconds=60,
     )
@@ -163,7 +163,7 @@ def run_protected_scenario() -> dict:
 def measure_verification_overhead(iterations: int = 10_000) -> float:
     keypair = KeyPair.generate()
     issuer = TokenIssuer(keypair=keypair)
-    token = issuer.issue(iss="agent:bench", sub="tool:bench", caps=["tool:bench"], ttl_seconds=60)
+    token = issuer.issue(iss="agent:bench", sub="tool:bench", capabilities=["tool:bench"], ttl_seconds=60)
 
     start = time.perf_counter()
     for _ in range(iterations):

@@ -11,12 +11,15 @@ from swarmauth.exceptions import (
     TokenExpiredError,
     TokenNotYetValidError,
 )
+from swarmauth.middleware import TokenIssuer, guard
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability
 
 __version__ = "0.1.0"
 
 __all__ = [
     "KeyPair",
+    "TokenIssuer",
+    "guard",
     "CapabilityToken",
     "CapabilityClaims",
     "Constraints",

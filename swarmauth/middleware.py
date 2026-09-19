@@ -2,8 +2,8 @@
 a tool actually runs, plus thin adapters for common agent frameworks.
 
 The core primitive is `verify_and_check`, which is framework-agnostic. The
-`require_capability` decorator and the framework adapters below are
-convenience wrappers around it.
+`guard` decorator and the framework adapters below are convenience wrappers
+around it.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class TokenIssuer:
         *,
         iss: str,
         sub: str,
-        caps: list[str],
+        capabilities: list[str],
         constraints: Optional[Constraints] = None,
         ttl_seconds: int = 60,
     ) -> str:
@@ -39,7 +39,7 @@ class TokenIssuer:
             issuer_keypair=self.keypair,
             iss=iss,
             sub=sub,
-            caps=caps,
+            capabilities=capabilities,
             constraints=constraints,
             ttl_seconds=ttl_seconds,
         )
@@ -133,7 +133,7 @@ def verify_and_check(
     return claims
 
 
-def require_capability(
+def guard(
     capability: str,
     *,
     issuer_public_key: bytes,
@@ -142,7 +142,8 @@ def require_capability(
     token_kwarg: str = "token",
     amount_kwarg: Optional[str] = None,
 ) -> Callable[[F], F]:
-    """Decorator for a tool function: verify a SwarmAuth token before running it.
+    """Execution-boundary guard: decorate a tool function so it verifies a
+    JSON Capability Token before running, e.g. `@swarmauth.guard("tool:x", ...)`.
 
     The wrapped function must be called with the token as a keyword argument
     (`token_kwarg`, default "token"); it is stripped before the underlying
@@ -157,7 +158,7 @@ def require_capability(
             token = kwargs.pop(token_kwarg, None)
             if not token:
                 raise CapabilityViolationError(
-                    f"No SwarmAuth token supplied (expected kwarg '{token_kwarg}')", required=capability
+                    f"No JCT supplied (expected kwarg '{token_kwarg}')", required=capability
                 )
 
             amount = float(kwargs.get(amount_kwarg, 0.0)) if amount_kwarg else 0.0
@@ -184,6 +185,17 @@ def require_capability(
 # adapter secures the *execution* side (verifying incoming tokens) of a tool
 # already registered with that framework; pair it with TokenIssuer on the
 # calling agent's side to sign outgoing calls.
+#
+# IMPORTANT: the token must never be part of a tool's LLM-visible schema. If
+# it were a normal parameter, the model itself could be prompted to omit,
+# forge, or copy one from elsewhere in context -- exactly the trust boundary
+# SwarmAuth exists to remove. Wrap the callable BEFORE the framework builds
+# the tool's schema from its signature (frameworks generate schemas via
+# `inspect.signature`, which follows `functools.wraps`'s `__wrapped__` link
+# straight past the `token` kwarg these wrappers add), and have your own
+# runtime -- not the model -- supply `token=...` when it invokes the
+# underlying callable. `tests/test_framework_adapters.py` demonstrates this
+# against real langchain-core and ag2 installs.
 # ---------------------------------------------------------------------------
 
 
@@ -198,13 +210,13 @@ def secure_tool_call(
 ) -> Callable[..., Any]:
     """Framework-agnostic helper: wrap any callable (a LangChain tool's `func=`,
     a CrewAI `Tool`'s callable, an AutoGen registered function, or a plain
-    Python function) so it verifies a SwarmAuth token before running.
+    Python function) so it verifies a JSON Capability Token before running.
 
-    Equivalent to `require_capability` but expressed as a plain wrapping
-    function, since most frameworks register a tool from an existing
-    callable rather than letting you decorate a `def` in place.
+    Equivalent to `guard` but expressed as a plain wrapping function, since
+    most frameworks register a tool from an existing callable rather than
+    letting you decorate a `def` in place.
     """
-    return require_capability(
+    return guard(
         capability,
         issuer_public_key=issuer_public_key,
         audience=audience,
@@ -215,7 +227,7 @@ def secure_tool_call(
 
 def secure_langchain_tool(tool: Any, **kwargs: Any) -> Any:
     """Wrap a LangChain `BaseTool` (or any object with a `.func`/`._run`) so its
-    execution is gated on a valid SwarmAuth token. Duck-typed -- does not
+    execution is gated on a valid JSON Capability Token. Duck-typed -- does not
     import langchain, so it works against any version with no hard dependency.
     """
     if getattr(tool, "func", None) is not None:
@@ -235,8 +247,21 @@ def secure_crewai_tool(tool: Any, **kwargs: Any) -> Any:
 
 
 def secure_autogen_function(func: Callable[..., Any], **kwargs: Any) -> Callable[..., Any]:
-    """Wrap a plain function before registering it with an AutoGen agent, e.g.:
+    """Wrap a plain function before registering it as a tool with an AutoGen-family
+    framework. The "AutoGen" name now covers several actively-diverging APIs
+    (classic `pyautogen`'s `ConversableAgent.register_for_execution()`,
+    Microsoft's rewritten `autogen-agentchat`, and the community `ag2` fork's
+    `@ag2.tool` decorator) -- this adapter deliberately has zero framework
+    import and just returns a guarded plain callable, so it composes with
+    whichever registration mechanism your installed version uses:
 
+        # ag2 (tested in tests/test_framework_adapters.py against a real install):
+        tool = ag2.tool(secure_autogen_function(process_payout, ...))
+
+        # classic pyautogen/ConversableAgent:
         agent.register_for_execution()(secure_autogen_function(process_payout, ...))
+
+    See the note above on why the token must stay out of the function's
+    LLM-visible schema either way.
     """
     return secure_tool_call(func, **kwargs)

@@ -1,6 +1,6 @@
 """Capability token creation, parsing, and verification.
 
-A SwarmAuth Capability Token (SACT) is a compact, three-part string:
+A JSON Capability Token (JCT) is a compact, three-part string:
 
     base64url(header) . base64url(payload) . base64url(signature)
 
@@ -25,7 +25,7 @@ from swarmauth.exceptions import (
 )
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
 
-TOKEN_TYPE = "SACT"  # SwarmAuth Capability Token
+TOKEN_TYPE = "JCT"  # JSON Capability Token
 ALG = "EdDSA"
 MAX_TTL_SECONDS = 300  # hard ceiling; enforced independent of caller input
 
@@ -58,7 +58,9 @@ class CapabilityClaims(BaseModel):
     sub: str = Field(
         ..., description="Target agent/tool ID this token authorizes calling into, e.g. 'tool:process_payout'."
     )
-    caps: list[str] = Field(..., min_length=1, description="Capabilities granted, e.g. ['tool:read_invoice'].")
+    capabilities: list[str] = Field(
+        ..., min_length=1, description="Capabilities granted, e.g. ['tool:read_invoice']."
+    )
     constraints: Constraints = Field(default_factory=Constraints)
     iat: int = Field(..., description="Issued-at, unix seconds.")
     exp: int = Field(..., description="Expiry, unix seconds. Must satisfy exp - iat <= 300.")
@@ -66,11 +68,11 @@ class CapabilityClaims(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    @field_validator("caps")
+    @field_validator("capabilities")
     @classmethod
-    def _caps_nonempty_strings(cls, v: list[str]) -> list[str]:
+    def _capabilities_nonempty_strings(cls, v: list[str]) -> list[str]:
         if any(not isinstance(c, str) or not c for c in v):
-            raise ValueError("caps must be a list of non-empty strings")
+            raise ValueError("capabilities must be a list of non-empty strings")
         return v
 
 
@@ -80,7 +82,7 @@ def _canonical_json(obj: dict[str, Any]) -> bytes:
 
 
 class CapabilityToken:
-    """Facade for issuing and verifying SACT strings."""
+    """Facade for issuing and verifying JCT strings."""
 
     @staticmethod
     def issue(
@@ -88,7 +90,7 @@ class CapabilityToken:
         issuer_keypair: KeyPair,
         iss: str,
         sub: str,
-        caps: list[str],
+        capabilities: list[str],
         constraints: Optional[Constraints] = None,
         ttl_seconds: int = 60,
     ) -> str:
@@ -101,7 +103,7 @@ class CapabilityToken:
         claims = CapabilityClaims(
             iss=iss,
             sub=sub,
-            caps=caps,
+            capabilities=capabilities,
             constraints=constraints or Constraints(),
             iat=now,
             exp=now + ttl_seconds,
@@ -179,13 +181,13 @@ def check_capability(claims: CapabilityClaims, required: str) -> None:
     Supports exact match or a `prefix:*` wildcard grant (e.g. `tool:*` grants
     `tool:read_invoice`).
     """
-    for granted in claims.caps:
+    for granted in claims.capabilities:
         if granted == required:
             return
         if granted.endswith(":*") and required.startswith(granted[:-1]):
             return
     raise CapabilityViolationError(
-        f"Token does not grant capability '{required}'", required=required, granted=claims.caps
+        f"Token does not grant capability '{required}'", required=required, granted=claims.capabilities
     )
 
 

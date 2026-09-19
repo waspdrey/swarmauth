@@ -19,7 +19,7 @@ between agents. Read the full threat model and protocol details in
   doesn't try to detect or prevent it — it makes the LLM's decision
   irrelevant at the point of execution.
 - **Capability tokens, not credentials.** A token names exactly what it
-  authorizes (`caps`), against whom (`sub`), and under what limits
+  authorizes (`capabilities`), against whom (`sub`), and under what limits
   (`constraints`: rate limits, call caps, budget caps, parameter
   allowlists) — never a raw, reusable key.
 - **Tokens expire in seconds.** Max TTL is 300 seconds, enforced by every
@@ -31,29 +31,30 @@ between agents. Read the full threat model and protocol details in
 ## Quickstart
 
 ```python
-from swarmauth import KeyPair
-from swarmauth.middleware import TokenIssuer, require_capability
+import swarmauth
 
-finance_keys = KeyPair.generate()
+finance_keys = swarmauth.KeyPair.generate()
 
-@require_capability("tool:process_payout", issuer_public_key=finance_keys.public_bytes)
+@swarmauth.guard("tool:process_payout", issuer_public_key=finance_keys.public_bytes)
 def process_payout(destination_account: str, amount_usd: float):
     ...  # your real tool logic — only ever reached with a verified, in-scope token
 ```
 
-Issuing the token an upstream agent presents is one line:
+Issuing a token that will actually pass that check is one line:
 
 ```python
-token = TokenIssuer(finance_keys).issue(
+token = swarmauth.TokenIssuer(finance_keys).issue(
     iss="agent:sales-agent-01", sub="tool:process_payout",
-    caps=["tool:draft_payout"], ttl_seconds=60,
+    capabilities=["tool:process_payout"], ttl_seconds=60,
 )
 ```
 
-That's the entire integration surface: decorate the tool, issue the token.
-Framework adapters for LangChain, CrewAI, and AutoGen tools are one call
-each — see [`swarmauth/middleware.py`](swarmauth/middleware.py)
-(`secure_langchain_tool`, `secure_crewai_tool`, `secure_autogen_function`).
+That's the entire integration surface: `@swarmauth.guard` the tool, issue the
+token. Framework adapters for LangChain, CrewAI, and AutoGen tools are one
+call each — see [`swarmauth/middleware.py`](swarmauth/middleware.py)
+(`secure_langchain_tool`, `secure_crewai_tool`, `secure_autogen_function`),
+verified against real LangChain and ag2 installs in
+[`tests/test_framework_adapters.py`](tests/test_framework_adapters.py).
 
 ## Install
 
@@ -66,6 +67,13 @@ pip install cryptography pydantic
 (Not yet published to PyPI — this is the MVP/open-source launch. `pip
 install -e .` from a clone works today.)
 
+For running tests, including the real-framework adapter tests:
+
+```bash
+pip install -e ".[dev,frameworks]"
+pytest
+```
+
 ## Architecture
 
 ```mermaid
@@ -74,16 +82,16 @@ sequenceDiagram
     participant I as SwarmAuth Token Issuer
     participant B as Agent B / Tool (Finance Agent)
 
-    A->>I: Request capability token (iss=A, sub=B, caps=[...], constraints, ttl<=300s)
-    I->>I: Evaluate policy — is A allowed to request these caps against B?
-    I-->>A: Signed Capability Token (SACT)
-    A->>B: Tool call, with SACT attached
+    A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=300s)
+    I->>I: Evaluate policy — is A allowed to request these capabilities against B?
+    I-->>A: Signed JSON Capability Token (JCT)
+    A->>B: Tool call, with JCT attached
     B->>B: Verify Ed25519 signature, exp/iat window, audience, capability, constraints
-    alt Valid & in-scope
-        B->>B: Execute tool; record usage against jti
+    alt Valid and in scope
+        B->>B: Execute tool, record usage against jti
         B-->>A: Result
-    else Invalid, expired, wrong audience, missing capability, or over-limit
-        B-->>A: Reject (CapabilityViolationError / ConstraintViolationError / ...)
+    else Invalid, expired, wrong audience, missing capability, or over limit
+        B-->>A: Reject (CapabilityViolationError, ConstraintViolationError, etc)
     end
 ```
 
@@ -126,19 +134,24 @@ call — so the execution boundary rejects it before the ledger is touched.
 
 ```
 swarmauth/
-├── SPEC.md                   # protocol specification
+├── SPEC.md                       # protocol specification
 ├── README.md
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── .github/workflows/ci.yml       # tests + benchmark on every push/PR
 ├── swarmauth/
 │   ├── __init__.py
-│   ├── crypto.py              # Ed25519 keypairs, signing, verification
-│   ├── token.py                # CapabilityToken: issue / parse / verify
-│   ├── middleware.py            # decorators + LangChain/CrewAI/AutoGen adapters
-│   └── exceptions.py
+│   ├── crypto.py                  # Ed25519 keypairs, signing, verification
+│   ├── token.py                    # CapabilityToken: issue / parse / verify
+│   ├── middleware.py                # guard decorator + framework adapters
+│   ├── exceptions.py
+│   └── py.typed
 ├── benchmarks/
-│   └── swarmbench.py           # runnable unprotected-vs-protected simulation
+│   └── swarmbench.py               # runnable unprotected-vs-protected simulation
 └── tests/
     ├── test_token.py
-    └── test_middleware.py
+    ├── test_middleware.py
+    └── test_framework_adapters.py   # real LangChain + ag2 integration tests
 ```
 
 ## Design principles

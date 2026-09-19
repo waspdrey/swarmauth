@@ -46,7 +46,7 @@ SwarmAuth's design response:
 
 | Risk | Mitigation |
 |---|---|
-| Compromised agent forges unlimited authority | Tokens carry an explicit `caps` allowlist; anything not listed is denied by default. |
+| Compromised agent forges unlimited authority | Tokens carry an explicit `capabilities` allowlist; anything not listed is denied by default. |
 | Leaked token used after the fact | `exp` is capped at 300 seconds from issuance; leaked tokens self-invalidate quickly. |
 | Leaked token replayed rapidly within its lifetime | `constraints.max_calls`, `constraints.rate_limit_per_min`, and `jti`-keyed usage tracking bound repeat use. |
 | Confused deputy (token used against the wrong target) | `sub` binds the token to a specific audience; verifiers must check `sub == audience`. |
@@ -59,7 +59,7 @@ you already would).
 
 ## 3. Token Structure
 
-A SwarmAuth Capability Token (**SACT**) is a compact string of three
+A JSON Capability Token (**JCT**) is a compact string of three
 base64url segments separated by `.`, structurally similar to a JWS compact
 serialization but with a fixed, narrow algorithm and claim set:
 
@@ -72,7 +72,7 @@ base64url(header) . base64url(payload) . base64url(signature)
 ```json
 {
   "alg": "EdDSA",
-  "typ": "SACT",
+  "typ": "JCT",
   "kid": "<base64url-encoded 32-byte Ed25519 public key of the issuer>"
 }
 ```
@@ -90,7 +90,7 @@ base64url(header) . base64url(payload) . base64url(signature)
 |---|---|---|---|
 | `iss` | string | yes | Issuer agent ID, e.g. `"agent:sales-agent-01"`. |
 | `sub` | string | yes | Target agent or tool ID this token authorizes calling into, e.g. `"tool:process_payout"`. The audience. |
-| `caps` | string[] | yes, non-empty | Capabilities granted. Exact match (`"tool:read_invoice"`) or a `prefix:*` wildcard (`"tool:*"`). |
+| `capabilities` | string[] | yes, non-empty | Capabilities granted. Exact match (`"tool:read_invoice"`) or a `prefix:*` wildcard (`"tool:*"`). |
 | `constraints` | object | no (defaults empty) | See §3.3. |
 | `iat` | integer | yes | Issued-at, Unix seconds. |
 | `exp` | integer | yes | Expiry, Unix seconds. **`exp - iat` MUST be ≤ 300.** Verifiers reject tokens that violate this even if the signature is valid, to prevent an issuer bug or a compromised issuer from minting long-lived tokens. |
@@ -134,12 +134,12 @@ Given a token string `T` and an expected audience `A`, a verifier MUST:
    not exactly 3 parts.
 2. Base64url-decode and JSON-parse the header and payload; reject on
    failure.
-3. Reject unless `header.typ == "SACT"` and `header.alg == "EdDSA"`.
+3. Reject unless `header.typ == "JCT"` and `header.alg == "EdDSA"`.
 4. Validate the payload against the claims schema (§3.2); reject on
    schema violation (missing/extra/mistyped fields).
 5. Look up (or read from `header.kid`, if the deployment's trust model
    allows self-asserted keys) the issuer's Ed25519 public key. **A verifier
-   MUST only accept public keys it trusts via out-of-band policy** — SACT's
+   MUST only accept public keys it trusts via out-of-band policy** — JCT's
    `kid` is a convenience for key identification, not a substitute for a
    trust decision.
 6. Verify the Ed25519 signature over `header_b64 + "." + payload_b64`.
@@ -149,7 +149,7 @@ Given a token string `T` and an expected audience `A`, a verifier MUST:
    (`leeway` defaults to 2 seconds, to absorb clock skew).
 9. If an audience `A` was supplied, reject unless `claims.sub == A`.
 10. Check that the capability required for the attempted action is present
-    in `claims.caps` (exact or wildcard match); reject otherwise.
+    in `claims.capabilities` (exact or wildcard match); reject otherwise.
 11. Check any parameters of the attempted call against
     `claims.constraints.allowed_params`; reject on mismatch.
 12. Atomically check and update a `jti`-keyed usage record against
@@ -168,19 +168,19 @@ sequenceDiagram
     participant I as SwarmAuth Token Issuer
     participant B as Agent B / Tool (Finance Agent)
 
-    A->>I: Request capability token (iss=A, sub=B, caps=[...], constraints, ttl<=300s)
-    I->>I: Evaluate policy — is A allowed to request these caps against B?
-    I-->>A: Signed Capability Token (SACT)
-    A->>B: Tool call, with SACT attached (header/metadata)
+    A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=300s)
+    I->>I: Evaluate policy — is A allowed to request these capabilities against B?
+    I-->>A: Signed Capability Token (JCT)
+    A->>B: Tool call, with JCT attached (header/metadata)
     B->>B: Verify Ed25519 signature against issuer's trusted public key
     B->>B: Check exp/iat window, audience (sub == B)
-    B->>B: Check required capability is in caps
+    B->>B: Check required capability is in capabilities
     B->>B: Check constraints (max_calls, max_amount_usd, rate_limit, allowed_params)
-    alt Token valid and capability/constraints satisfied
-        B->>B: Execute tool; record usage against jti
+    alt Token valid and capability and constraints satisfied
+        B->>B: Execute tool, record usage against jti
         B-->>A: Result
     else Invalid signature, expired, wrong audience, missing capability, or constraint violated
-        B-->>A: Reject (InvalidSignatureError / TokenExpiredError / CapabilityViolationError / ConstraintViolationError)
+        B-->>A: Reject (InvalidSignatureError, TokenExpiredError, CapabilityViolationError, ConstraintViolationError)
     end
 ```
 
@@ -190,7 +190,7 @@ Ed25519 keypair and self-issue tokens, with Agent B's trust in Agent A's
 public key (and the capabilities A is allowed to grant) established by
 out-of-band policy. In a centralized deployment, a dedicated issuer service
 holds the signing key(s) and agents request tokens from it over an
-authenticated channel. The SACT format and verification algorithm are
+authenticated channel. The JCT format and verification algorithm are
 identical either way — SwarmAuth defines the token and the boundary check,
 not the topology.
 
@@ -214,7 +214,7 @@ Reference SDK exception types (all subclass `SwarmAuthError`):
 | `TokenExpiredError` | `now > exp + leeway`, or `exp - iat > 300`. |
 | `TokenNotYetValidError` | `now < iat - leeway`. |
 | `AudienceMismatchError` | `sub != audience`. |
-| `CapabilityViolationError` | Required capability not in `caps`. |
+| `CapabilityViolationError` | Required capability not in `capabilities`. |
 | `ConstraintViolationError` | `max_calls`, `max_amount_usd`, `rate_limit_per_min`, or `allowed_params` would be violated. |
 
 ## 8. Security Considerations
@@ -236,7 +236,7 @@ Reference SDK exception types (all subclass `SwarmAuthError`):
   token TTL limits the exposure of a naive in-memory tracker to a single
   token's lifetime and a single process.
 - **Transport security is out of scope** — SwarmAuth assumes TLS (or
-  equivalent) between agents; SACT integrity/authenticity is orthogonal to,
+  equivalent) between agents; JCT integrity/authenticity is orthogonal to,
   and does not replace, transport confidentiality.
 - **Key distribution and revocation are deployment concerns.** SwarmAuth
   does not mandate a specific PKI; `kid` is a hint, not a trust root. Given
@@ -247,6 +247,6 @@ Reference SDK exception types (all subclass `SwarmAuthError`):
 ## 9. Versioning
 
 This is `0.1.0-draft`, the MVP surface. Backwards-incompatible changes to
-the header/claims schema will bump the `typ` value away from `"SACT"` (or
-introduce a versioned successor, e.g. `"SACT2"`) so that old and new
+the header/claims schema will bump the `typ` value away from `"JCT"` (or
+introduce a versioned successor, e.g. `"JCT2"`) so that old and new
 verifiers never silently misinterpret each other's tokens.

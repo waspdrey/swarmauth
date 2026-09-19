@@ -14,6 +14,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Only needed to run tests/test_framework_adapters.py against real installs;
+# not required to use swarmauth itself (see swarmauth/middleware.py).
+frameworks = ["langchain-core>=0.3", "ag2>=1.0"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -21,3 +24,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["swarmauth*"]
+
+[tool.setuptools.package-data]
+swarmauth = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
