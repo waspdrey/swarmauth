@@ -1,0 +1,30 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-09-19
+
+Initial release.
+
+### Added
+
+- Ed25519-signed, short-lived (≤300s) capability tokens (`CapabilityToken`,
+  `TokenIssuer`) scoping exactly what an agent-to-agent or agent-to-tool call
+  is authorized to do.
+- `Constraints`: rate limits, call caps, budget caps, and parameter
+  allowlists enforced at verification time.
+- `KeyRegistry` for multi-issuer trust and key rotation without a hard
+  cutover.
+- `UsageTracker` (in-memory) and `RedisUsageTracker` (opt-in `redis` extra)
+  for atomic constraint enforcement, the latter across every verifier
+  process in a swarm.
+- `guard` decorator and `secure_tool_call` for gating a plain Python
+  callable on a valid token before it executes.
+- Framework adapters: `secure_langchain_tool`, `secure_crewai_tool`,
+  `secure_autogen_function`, `secure_mcp_tool` — each a thin, dependency-free
+  wrapper tested against real LangChain, ag2, and MCP installs.
+
+[0.1.0]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.0

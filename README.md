@@ -1,5 +1,10 @@
 # SwarmAuth
 
+[![PyPI](https://img.shields.io/pypi/v/swarmauth.svg)](https://pypi.org/project/swarmauth/)
+[![CI](https://github.com/waspdrey/swarmauth/actions/workflows/ci.yml/badge.svg)](https://github.com/waspdrey/swarmauth/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/pypi/pyversions/swarmauth.svg)](https://pypi.org/project/swarmauth/)
+
 **The zero-trust authorization standard for multi-agent systems.**
 
 SwarmAuth is OAuth 2.1 for autonomous AI swarms: cryptographically signed,

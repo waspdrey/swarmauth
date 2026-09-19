@@ -4,9 +4,21 @@ version = "0.1.0"
 description = "OAuth 2.1 for autonomous AI agent swarms: signed, short-lived, capability-scoped delegation tokens."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "SwarmAuth Contributors" }]
 keywords = ["ai-agents", "security", "authorization", "multi-agent", "llm", "ed25519"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
 dependencies = [
     "cryptography>=42.0",
     "pydantic>=2.5",
@@ -21,8 +33,15 @@ frameworks = ["langchain-core>=0.3", "ag2>=1.0", "mcp>=1.0"]
 # default swarmauth.middleware.UsageTracker (in-memory) has no such dependency.
 redis = ["redis>=5.0"]
 
+[project.urls]
+Homepage = "https://github.com/waspdrey/swarmauth"
+Repository = "https://github.com/waspdrey/swarmauth"
+Issues = "https://github.com/waspdrey/swarmauth/issues"
+Documentation = "https://github.com/waspdrey/swarmauth/blob/main/SPEC.md"
+Changelog = "https://github.com/waspdrey/swarmauth/blob/main/CHANGELOG.md"
+
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
