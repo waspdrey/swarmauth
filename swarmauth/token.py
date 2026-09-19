@@ -19,11 +19,13 @@ from pydantic import BaseModel, Field, field_validator
 from swarmauth.crypto import KeyPair, b64url_decode, b64url_encode, generate_jti, verify_signature
 from swarmauth.exceptions import (
     AudienceMismatchError,
+    InvalidSignatureError,
     MalformedTokenError,
     TokenExpiredError,
     TokenNotYetValidError,
 )
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
+from swarmauth.registry import KeyRegistry
 
 TOKEN_TYPE = "JCT"  # JSON Capability Token
 ALG = "EdDSA"
@@ -79,6 +81,16 @@ class CapabilityClaims(BaseModel):
 def _canonical_json(obj: dict[str, Any]) -> bytes:
     """Deterministic encoding used for both signing and verification."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+
+
+def _try_verify(public_key: bytes, signing_input: bytes, signature: bytes) -> bool:
+    """Like verify_signature, but returns False instead of raising -- used to
+    try each candidate key from a KeyRegistry during a rotation window."""
+    try:
+        verify_signature(public_key, signing_input, signature)
+        return True
+    except InvalidSignatureError:
+        return False
 
 
 class CapabilityToken:
@@ -146,19 +158,36 @@ class CapabilityToken:
     def verify(
         token: str,
         *,
-        issuer_public_key: bytes,
+        issuer_public_key: Optional[bytes] = None,
+        key_registry: Optional[KeyRegistry] = None,
         audience: Optional[str] = None,
         leeway_seconds: int = 2,
     ) -> CapabilityClaims:
         """Fully verify a token: signature, TTL ceiling, expiry, and (optionally) audience.
 
-        Raises MalformedTokenError, InvalidSignatureError, TokenExpiredError,
-        TokenNotYetValidError, or AudienceMismatchError.
+        Exactly one of `issuer_public_key` (trust a single, already-known key --
+        the two-agent case) or `key_registry` (look up the trusted key(s) for
+        `claims.iss`, supporting multiple issuers and key rotation) must be
+        given.
+
+        Raises MalformedTokenError, InvalidSignatureError, UnknownIssuerError,
+        TokenExpiredError, TokenNotYetValidError, or AudienceMismatchError.
         """
+        if (issuer_public_key is None) == (key_registry is None):
+            raise ValueError("Pass exactly one of issuer_public_key or key_registry")
+
         header, claims, signing_input = CapabilityToken.parse(token)
         signature = b64url_decode(token.split(".")[2])
 
-        verify_signature(issuer_public_key, signing_input, signature)
+        if key_registry is not None:
+            candidate_keys = key_registry.keys_for(claims.iss)  # raises UnknownIssuerError
+            if not any(_try_verify(key, signing_input, signature) for key in candidate_keys):
+                raise InvalidSignatureError(
+                    f"Ed25519 signature verification failed against all {len(candidate_keys)} "
+                    f"trusted key(s) for issuer '{claims.iss}'"
+                )
+        else:
+            verify_signature(issuer_public_key, signing_input, signature)
 
         if claims.exp - claims.iat > MAX_TTL_SECONDS:
             raise TokenExpiredError(f"Token TTL {claims.exp - claims.iat}s exceeds max {MAX_TTL_SECONDS}s")

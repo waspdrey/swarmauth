@@ -22,12 +22,20 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The core suite (`tests/test_token.py`, `tests/test_middleware.py`) has no
-dependencies beyond `cryptography` and `pydantic` and should always pass.
+The core suite (`tests/test_token.py`, `tests/test_middleware.py`,
+`tests/test_registry.py`) has no dependencies beyond `cryptography` and
+`pydantic` and should always pass.
 
-`tests/test_framework_adapters.py` exercises the LangChain and AutoGen/ag2
-adapters against real installs of those frameworks (not mocks). It's skipped
-automatically if they aren't installed; to run it:
+`tests/test_redis_backend.py` runs against `fakeredis` by default (in
+the `dev` extra, since `fakeredis` depends on `redis` itself, so `pip
+install -e ".[dev]"` is enough). Set `SWARMAUTH_TEST_REDIS_URL` (e.g.
+`redis://localhost:6379/0`) to run the identical tests against a real
+server instead -- CI's `redis-backend-live` job does this against a real
+`redis:7` container.
+
+`tests/test_framework_adapters.py` exercises the LangChain, AutoGen/ag2, and
+MCP adapters against real installs of those frameworks (not mocks). It's
+skipped automatically if they aren't installed; to run it:
 
 ```bash
 pip install -e ".[dev,frameworks]"

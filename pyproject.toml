@@ -13,10 +13,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "fakeredis>=2.20"]
 # Only needed to run tests/test_framework_adapters.py against real installs;
 # not required to use swarmauth itself (see swarmauth/middleware.py).
-frameworks = ["langchain-core>=0.3", "ag2>=1.0"]
+frameworks = ["langchain-core>=0.3", "ag2>=1.0", "mcp>=1.0"]
+# Only needed for swarmauth.backends.redis_backend.RedisUsageTracker; the
+# default swarmauth.middleware.UsageTracker (in-memory) has no such dependency.
+redis = ["redis>=5.0"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

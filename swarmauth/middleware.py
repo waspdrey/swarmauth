@@ -15,6 +15,7 @@ from typing import Any, Callable, Optional, TypeVar
 
 from swarmauth.crypto import KeyPair
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
+from swarmauth.registry import KeyRegistry
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability, check_params
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -105,7 +106,8 @@ class UsageTracker:
 def verify_and_check(
     token: str,
     *,
-    issuer_public_key: bytes,
+    issuer_public_key: Optional[bytes] = None,
+    key_registry: Optional[KeyRegistry] = None,
     audience: Optional[str] = None,
     required_capability: Optional[str] = None,
     amount: float = 0.0,
@@ -115,11 +117,17 @@ def verify_and_check(
     """Verify a token's signature/expiry/audience, check capability + constraints,
     and (if a tracker is given) atomically record usage against it.
 
+    Exactly one of `issuer_public_key` or `key_registry` must be given -- see
+    `CapabilityToken.verify` for the difference (single trusted key vs. a
+    multi-issuer, rotation-aware registry).
+
     This is the single function every framework adapter below funnels into --
     it is the actual execution boundary, independent of whatever the calling
     agent's LLM decided to do.
     """
-    claims = CapabilityToken.verify(token, issuer_public_key=issuer_public_key, audience=audience)
+    claims = CapabilityToken.verify(
+        token, issuer_public_key=issuer_public_key, key_registry=key_registry, audience=audience
+    )
 
     if required_capability is not None:
         check_capability(claims, required_capability)
@@ -136,7 +144,8 @@ def verify_and_check(
 def guard(
     capability: str,
     *,
-    issuer_public_key: bytes,
+    issuer_public_key: Optional[bytes] = None,
+    key_registry: Optional[KeyRegistry] = None,
     audience: Optional[str] = None,
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
@@ -145,11 +154,15 @@ def guard(
     """Execution-boundary guard: decorate a tool function so it verifies a
     JSON Capability Token before running, e.g. `@swarmauth.guard("tool:x", ...)`.
 
+    Pass exactly one of `issuer_public_key` (single trusted issuer) or
+    `key_registry` (many issuers, with key-rotation support -- see
+    `swarmauth.registry.KeyRegistry`).
+
     The wrapped function must be called with the token as a keyword argument
     (`token_kwarg`, default "token"); it is stripped before the underlying
-    function is invoked. Raises InvalidSignatureError / TokenExpiredError /
-    CapabilityViolationError / ConstraintViolationError instead of executing
-    the function.
+    function is invoked. Raises InvalidSignatureError / UnknownIssuerError /
+    TokenExpiredError / CapabilityViolationError / ConstraintViolationError
+    instead of executing the function.
     """
 
     def decorator(func: F) -> F:
@@ -165,6 +178,7 @@ def guard(
             verify_and_check(
                 token,
                 issuer_public_key=issuer_public_key,
+                key_registry=key_registry,
                 audience=audience,
                 required_capability=capability,
                 amount=amount,
@@ -203,7 +217,8 @@ def secure_tool_call(
     func: Callable[..., Any],
     *,
     capability: str,
-    issuer_public_key: bytes,
+    issuer_public_key: Optional[bytes] = None,
+    key_registry: Optional[KeyRegistry] = None,
     audience: Optional[str] = None,
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
@@ -219,6 +234,7 @@ def secure_tool_call(
     return guard(
         capability,
         issuer_public_key=issuer_public_key,
+        key_registry=key_registry,
         audience=audience,
         tracker=tracker,
         token_kwarg=token_kwarg,
@@ -244,6 +260,21 @@ def secure_crewai_tool(tool: Any, **kwargs: Any) -> Any:
     CrewAI tools expose the same `.func` / `._run` shape.
     """
     return secure_langchain_tool(tool, **kwargs)
+
+
+def secure_mcp_tool(func: Callable[..., Any], **kwargs: Any) -> Callable[..., Any]:
+    """Wrap a plain function before registering it as a Model Context Protocol
+    tool. MCP tool handlers are plain functions decorated at registration
+    time (`@server.tool()`), the same shape as AutoGen/ag2's `@tool` --
+    tested against a real `mcp.server.mcpserver.MCPServer` in
+    tests/test_framework_adapters.py, which confirms the schema MCP exposes
+    to the model omits `token` entirely (schema is built from the wrapped
+    function's real signature via `__wrapped__`, added by `functools.wraps`)
+    while the guard still enforces correctly when the tool is called:
+
+        server.tool()(secure_mcp_tool(process_payout, capability="tool:process_payout", ...))
+    """
+    return secure_tool_call(func, **kwargs)
 
 
 def secure_autogen_function(func: Callable[..., Any], **kwargs: Any) -> Callable[..., Any]:

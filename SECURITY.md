@@ -45,12 +45,14 @@ In scope:
 Out of scope:
 
 - Vulnerabilities requiring an attacker to already possess a valid issuer
-  private key (key custody is a deployment concern, not a protocol one —
-  see SPEC.md §8).
+  private key. Private key custody itself is a deployment concern; however,
+  a way to defeat `KeyRegistry` revocation or rotation (SPEC.md §8) without
+  the private key is very much in scope.
 - Denial of service against a deployment's own infrastructure (rate limiting
   beyond `constraints.rate_limit_per_min` is a deployment concern).
-- Issues in third-party frameworks (LangChain, CrewAI, AutoGen/ag2) that
-  swarmauth's adapters wrap but do not implement.
+- Issues in third-party frameworks or infrastructure (LangChain, CrewAI,
+  AutoGen/ag2, MCP, Redis) that swarmauth's adapters/backends wrap but do
+  not implement.
 
 ## Response
 

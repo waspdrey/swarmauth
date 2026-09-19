@@ -28,6 +28,15 @@ class AudienceMismatchError(SwarmAuthError):
     """Raised when a token's `sub` claim does not match the agent/tool verifying it."""
 
 
+class UnknownIssuerError(SwarmAuthError):
+    """Raised when a KeyRegistry has no trusted key registered for a token's `iss`.
+
+    Distinct from InvalidSignatureError: this means the verifier has no
+    policy opinion about this issuer at all, not that a signature failed to
+    verify against a known key.
+    """
+
+
 class CapabilityViolationError(SwarmAuthError):
     """Raised when a token does not grant the capability required for the attempted action."""
 

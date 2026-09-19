@@ -1,6 +1,7 @@
 """Integration tests for the framework adapters against REAL installed
 frameworks, not mocks -- these exercise langchain-core's actual `StructuredTool`
-/ `BaseTool` classes and ag2's actual `@tool` decorator.
+/ `BaseTool` classes, ag2's actual `@tool` decorator, and a real
+`mcp.server.mcpserver.MCPServer`.
 
 CrewAI is deliberately not installed here: its dependency chain (chromadb,
 onnxruntime, embedchain, ...) is heavy enough that pulling it in for CI would
@@ -13,17 +14,27 @@ These tests require the `dev` extras: `pip install -e ".[dev]"`.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from swarmauth.crypto import KeyPair
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
-from swarmauth.middleware import TokenIssuer, secure_autogen_function, secure_crewai_tool, secure_langchain_tool
+from swarmauth.middleware import (
+    TokenIssuer,
+    secure_autogen_function,
+    secure_crewai_tool,
+    secure_langchain_tool,
+    secure_mcp_tool,
+)
 from swarmauth.token import Constraints
 
 langchain_core = pytest.importorskip("langchain_core", reason="pip install -e '.[dev]' to run framework adapter tests")
 ag2 = pytest.importorskip("ag2", reason="pip install -e '.[dev]' to run framework adapter tests")
+mcp = pytest.importorskip("mcp", reason="pip install -e '.[dev]' to run framework adapter tests")
 
 from langchain_core.tools import BaseTool, StructuredTool  # noqa: E402
+from mcp.server.mcpserver import MCPServer  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -159,3 +170,55 @@ def test_secure_autogen_function_blocks_without_token():
     guarded = secure_autogen_function(process_payout, capability="tool:process_payout", issuer_public_key=kp.public_bytes)
     with pytest.raises(CapabilityViolationError):
         guarded(destination_account="ATTACKER-ACCT-9999", amount_usd=50000.0)
+
+
+# ---------------------------------------------------------------------------
+# Model Context Protocol (MCP): decorator-based tools on a real server
+# ---------------------------------------------------------------------------
+
+
+def test_secure_mcp_tool_schema_omits_token_and_registers_under_real_name():
+    kp = KeyPair.generate()
+    server = MCPServer("swarmauth-test-server")
+
+    def process_payout(destination_account: str, amount_usd: float) -> str:
+        return f"sent {amount_usd} to {destination_account}"
+
+    guarded = secure_mcp_tool(process_payout, capability="tool:process_payout", issuer_public_key=kp.public_bytes)
+    server.tool()(guarded)
+
+    tools = asyncio.run(server.list_tools())
+    assert [t.name for t in tools] == ["process_payout"]
+    # The schema the model actually sees must NOT include `token` -- proving
+    # the security-critical claim in swarmauth/middleware.py's adapter note:
+    # schema generation follows __wrapped__ straight past the guard's kwarg.
+    assert set(tools[0].input_schema.get("properties", {})) == {"destination_account", "amount_usd"}
+
+
+def test_secure_mcp_tool_blocks_without_token_even_though_registered():
+    kp = KeyPair.generate()
+    server = MCPServer("swarmauth-test-server")
+
+    def process_payout(destination_account: str, amount_usd: float) -> str:
+        return f"sent {amount_usd} to {destination_account}"
+
+    guarded = secure_mcp_tool(process_payout, capability="tool:process_payout", issuer_public_key=kp.public_bytes)
+    server.tool()(guarded)
+
+    with pytest.raises(CapabilityViolationError):
+        guarded(destination_account="ATTACKER-ACCT-9999", amount_usd=50000.0)
+
+
+def test_secure_mcp_tool_executes_with_valid_token():
+    kp = KeyPair.generate()
+    issuer = TokenIssuer(kp)
+    server = MCPServer("swarmauth-test-server")
+
+    def process_payout(destination_account: str, amount_usd: float) -> str:
+        return f"sent {amount_usd} to {destination_account}"
+
+    guarded = secure_mcp_tool(process_payout, capability="tool:process_payout", issuer_public_key=kp.public_bytes)
+    server.tool()(guarded)
+
+    token = issuer.issue(iss="agent:sales", sub="tool:process_payout", capabilities=["tool:process_payout"])
+    assert guarded(destination_account="acct_1", amount_usd=5.0, token=token) == "sent 5.0 to acct_1"

@@ -214,10 +214,67 @@ Reference SDK exception types (all subclass `SwarmAuthError`):
 | `TokenExpiredError` | `now > exp + leeway`, or `exp - iat > 300`. |
 | `TokenNotYetValidError` | `now < iat - leeway`. |
 | `AudienceMismatchError` | `sub != audience`. |
+| `UnknownIssuerError` | Verifying against a `KeyRegistry` (§8) that has no key registered for `claims.iss` at all. |
 | `CapabilityViolationError` | Required capability not in `capabilities`. |
 | `ConstraintViolationError` | `max_calls`, `max_amount_usd`, `rate_limit_per_min`, or `allowed_params` would be violated. |
 
-## 8. Security Considerations
+## 8. Key Registry and Rotation
+
+Step 5 of the verification algorithm (§4) says a verifier "looks up ... the
+issuer's Ed25519 public key" and must only trust keys it accepts via
+out-of-band policy. The reference SDK's `swarmauth.registry.KeyRegistry`
+implements that policy store for the common case of many issuing agents:
+
+- **Multi-issuer**: `keys_for(iss)` returns the trusted key(s) for a
+  specific `iss`, so one verifier can trust many issuing agents without a
+  separate `issuer_public_key=` per call.
+- **Rotation without a hard cutover**: `register(iss, new_key, rotate=True)`
+  adds `new_key` ahead of an issuer's existing key(s) rather than replacing
+  them, so both the pre- and post-rotation key verify during a rollover
+  window. `CapabilityToken.verify(token, key_registry=...)` tries every
+  trusted key for `claims.iss` and accepts the first that verifies.
+- **Revocation**: `revoke(iss, key)` (a single compromised key) or
+  `revoke_issuer(iss)` (every key for that agent) take effect immediately
+  for the next verification — there is no propagation delay because the
+  registry is the verifier's own trust store, not a remote lookup.
+- **Unknown issuer is distinct from a bad signature.** If no key was ever
+  registered for `claims.iss`, verification raises `UnknownIssuerError`
+  before any signature check runs, rather than `InvalidSignatureError` --
+  this is a policy/registration gap (this verifier has no opinion about that
+  issuer), not evidence of a forged token.
+
+A verifier calls `CapabilityToken.verify(token, key_registry=...)` in place
+of `issuer_public_key=...` (exactly one of the two is required); `swarmauth.
+guard(...)` and `verify_and_check(...)` accept the same substitution.
+
+## 9. Distributed Usage Tracking
+
+Constraint enforcement for `max_calls`, `max_amount_usd`, and
+`rate_limit_per_min` (§3.3) requires state keyed by `jti` — meaningless
+against a single verification in isolation. The reference SDK ships two
+interchangeable trackers behind the same `check_and_record(claims, *,
+amount=0.0)` shape:
+
+- `swarmauth.middleware.UsageTracker` — in-memory, process-local. Correct
+  for a single verifier process; the zero-dependency default.
+- `swarmauth.backends.redis_backend.RedisUsageTracker` — the same
+  constraint logic enforced atomically across multiple verifier processes
+  or machines sharing one Redis instance, using optimistic-locking
+  WATCH/MULTI/EXEC (not a Lua script, so its behavior is auditable in plain
+  Python). State is keyed by `jti` under a TTL equal to the token's own
+  maximum lifetime plus a small buffer — since a JCT can never legitimately
+  be presented again after its own `exp`, there is never a reason to query
+  its usage after that window, so Redis expiring the key is both correct
+  and avoids unbounded key growth. Requires the optional `redis` extra
+  (`pip install swarmauth[redis]`); it is never imported by
+  `swarmauth.middleware` unless a caller explicitly imports it.
+
+Any backend satisfying the same `check_and_record` shape may be substituted;
+the protocol does not mandate Redis specifically, only that constraint
+enforcement be atomic wherever more than one process can verify tokens
+against the same `jti`.
+
+## 10. Security Considerations
 
 - **300-second ceiling is a protocol invariant, not a default.** A verifier
   MUST reject any token where `exp - iat > 300`, even if that token carries
@@ -229,22 +286,26 @@ Reference SDK exception types (all subclass `SwarmAuthError`):
   signing/verification, this trade is intentional.
 - **Wildcards and broad `allowed_params`-free budgets should be treated as
   privileged grants** and audited like any other broad credential.
-- **Usage tracking is best-effort within a process by default.** The
-  reference `UsageTracker` is in-memory; a distributed deployment enforcing
-  `max_calls`/`rate_limit_per_min` across multiple verifier processes needs
-  a shared backing store (e.g. Redis) behind the same interface — the short
-  token TTL limits the exposure of a naive in-memory tracker to a single
-  token's lifetime and a single process.
+- **The in-memory `UsageTracker` is process-local by default.** A single
+  process is exactly right for the two-agent examples in this spec; a
+  deployment with multiple verifier processes or machines enforcing the
+  same constraints against the same `jti` should use
+  `RedisUsageTracker` (§9) or an equivalent atomic backend instead — the
+  short token TTL bounds the damage of accidentally using the in-memory one
+  in that setting to a single token's lifetime, but it will still
+  under-enforce `max_calls`/`rate_limit_per_min` across processes.
 - **Transport security is out of scope** — SwarmAuth assumes TLS (or
   equivalent) between agents; JCT integrity/authenticity is orthogonal to,
   and does not replace, transport confidentiality.
-- **Key distribution and revocation are deployment concerns.** SwarmAuth
-  does not mandate a specific PKI; `kid` is a hint, not a trust root. Given
-  the short token TTL, revocation is rarely needed for token validity, but
-  agent public keys themselves should still be rotatable via whatever
-  registry the deployment uses.
+- **Key distribution is a deployment concern; revocation is not.** SwarmAuth
+  does not mandate a specific PKI for how a `KeyRegistry` (§8) initially
+  learns an issuer's public key — that's out-of-band policy, same as before.
+  But once registered, rotation and revocation are immediate and in-process
+  via the registry itself (§8), not a "deployment concern" left unsolved:
+  `kid` remains a hint for key identification, never a trust root, and a
+  verifier's `KeyRegistry` is the actual trust root.
 
-## 9. Versioning
+## 11. Versioning
 
 This is `0.1.0-draft`, the MVP surface. Backwards-incompatible changes to
 the header/claims schema will bump the `typ` value away from `"JCT"` (or
