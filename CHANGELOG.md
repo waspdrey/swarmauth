@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-09-19
+
+### Changed
+
+- Switched `license` to an SPDX expression (`MIT`) instead of a deprecated
+  TOML table, and added PyPI classifiers and `project.urls` (Homepage,
+  Repository, Issues, Documentation, Changelog) so the package page shows
+  proper metadata and links.
+- Added PyPI/CI/license/Python-version badges to the README.
+
 ## [0.1.0] - 2026-09-19
 
 Initial release.
@@ -27,4 +37,5 @@ Initial release.
   `secure_autogen_function`, `secure_mcp_tool` — each a thin, dependency-free
   wrapper tested against real LangChain, ag2, and MCP installs.
 
+[0.1.1]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.1
 [0.1.0]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.0
