@@ -14,7 +14,7 @@ from swarmauth.exceptions import (
 from swarmauth.middleware import TokenIssuer, guard
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "KeyPair",

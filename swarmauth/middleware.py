@@ -222,6 +222,7 @@ def secure_tool_call(
     audience: Optional[str] = None,
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
+    amount_kwarg: Optional[str] = None,
 ) -> Callable[..., Any]:
     """Framework-agnostic helper: wrap any callable (a LangChain tool's `func=`,
     a CrewAI `Tool`'s callable, an AutoGen registered function, or a plain
@@ -229,7 +230,10 @@ def secure_tool_call(
 
     Equivalent to `guard` but expressed as a plain wrapping function, since
     most frameworks register a tool from an existing callable rather than
-    letting you decorate a `def` in place.
+    letting you decorate a `def` in place. `amount_kwarg` names the wrapped
+    function's parameter to read a spend amount from, for enforcing a
+    token's `max_amount_usd` constraint -- without it, budget constraints
+    are silently never charged for calls made through a framework adapter.
     """
     return guard(
         capability,
@@ -238,6 +242,7 @@ def secure_tool_call(
         audience=audience,
         tracker=tracker,
         token_kwarg=token_kwarg,
+        amount_kwarg=amount_kwarg,
     )(func)
 
 

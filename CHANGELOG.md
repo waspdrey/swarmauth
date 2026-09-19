@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-09-19
+
+### Fixed
+
+- **Bug**: `secure_tool_call` (and therefore every framework adapter built on
+  it — `secure_langchain_tool`, `secure_crewai_tool`, `secure_autogen_function`,
+  `secure_mcp_tool`) silently dropped `amount_kwarg`, raising `TypeError` for
+  anyone combining a framework adapter with `max_amount_usd` budget
+  constraints. Only the raw `@guard()` decorator ever supported it. `0.1.1`
+  is yanked on PyPI because of this; upgrade to `0.1.2`.
+
 ## [0.1.1] - 2026-09-19
 
 ### Changed
@@ -37,5 +48,6 @@ Initial release.
   `secure_autogen_function`, `secure_mcp_tool` — each a thin, dependency-free
   wrapper tested against real LangChain, ag2, and MCP installs.
 
+[0.1.2]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.2
 [0.1.1]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.1
 [0.1.0]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.0

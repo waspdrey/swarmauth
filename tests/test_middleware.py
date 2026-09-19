@@ -2,7 +2,7 @@ import pytest
 
 from swarmauth.crypto import KeyPair
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
-from swarmauth.middleware import TokenIssuer, UsageTracker, guard, verify_and_check
+from swarmauth.middleware import TokenIssuer, UsageTracker, guard, secure_tool_call, verify_and_check
 from swarmauth.token import Constraints
 
 
@@ -84,3 +84,51 @@ def test_guard_decorator_enforces_allowed_params():
 
     with pytest.raises(ConstraintViolationError):
         process_payout(destination_account="acct_ATTACKER", amount_usd=10.0, token=token)
+
+
+def test_guard_decorator_amount_kwarg_enforces_budget():
+    kp = KeyPair.generate()
+    issuer = TokenIssuer(kp)
+    token = issuer.issue(
+        iss="a", sub="tool:process_payout", capabilities=["tool:process_payout"],
+        constraints=Constraints(max_amount_usd=100.0),
+    )
+    tracker = UsageTracker()
+
+    @guard("tool:process_payout", issuer_public_key=kp.public_bytes, tracker=tracker, amount_kwarg="amount_usd")
+    def process_payout(destination_account, amount_usd):
+        return "executed"
+
+    assert process_payout(destination_account="acct_1", amount_usd=60.0, token=token) == "executed"
+    with pytest.raises(ConstraintViolationError):
+        process_payout(destination_account="acct_1", amount_usd=60.0, token=token)
+
+
+def test_secure_tool_call_forwards_amount_kwarg_to_budget_tracking():
+    # Regression test: secure_tool_call (and therefore every framework
+    # adapter built on it -- secure_langchain_tool, secure_crewai_tool,
+    # secure_autogen_function, secure_mcp_tool) previously dropped
+    # amount_kwarg entirely, so max_amount_usd constraints silently never
+    # got charged for calls made through a framework integration.
+    kp = KeyPair.generate()
+    issuer = TokenIssuer(kp)
+    token = issuer.issue(
+        iss="a", sub="tool:process_payout", capabilities=["tool:process_payout"],
+        constraints=Constraints(max_amount_usd=100.0),
+    )
+    tracker = UsageTracker()
+
+    def process_payout(destination_account, amount_usd):
+        return "executed"
+
+    guarded = secure_tool_call(
+        process_payout,
+        capability="tool:process_payout",
+        issuer_public_key=kp.public_bytes,
+        tracker=tracker,
+        amount_kwarg="amount_usd",
+    )
+
+    assert guarded(destination_account="acct_1", amount_usd=60.0, token=token) == "executed"
+    with pytest.raises(ConstraintViolationError):
+        guarded(destination_account="acct_1", amount_usd=60.0, token=token)
