@@ -1,0 +1,53 @@
+name: Deploy spec site to GitHub Pages
+
+# docs/index.html fetches spec.md at runtime and renders it client-side
+# (marked.js + mermaid.js, pinned versions with SRI). This workflow's only
+# job is to assemble that spec.md fresh from the current SPEC.md on every
+# deploy -- SPEC.md itself is never duplicated into a committed file, so
+# there is nothing here that can drift out of sync with it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "SPEC.md"
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp docs/index.html _site/index.html
+          cp docs/.nojekyll _site/.nojekyll
+          cp SPEC.md _site/spec.md
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
