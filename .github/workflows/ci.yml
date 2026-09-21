@@ -82,6 +82,31 @@ jobs:
       - name: Run framework adapter integration tests
         run: pytest -v tests/test_framework_adapters.py
 
+  # Validates the TypeScript reference implementation (ts/) against the same
+  # spec/test-vectors/vectors.json the Python SDK enforces itself against in
+  # the `test` job above -- both passing against one file is what makes them
+  # interoperable by construction, not by inspection.
+  typescript-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ts
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ts/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and run conformance tests
+        run: npm test
+
   # tests/test_redis_backend.py runs against fakeredis in the main `test` job
   # above (no real server needed). This job re-runs the same tests against an
   # actual Redis server, since fakeredis's wire-protocol emulation, however

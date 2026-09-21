@@ -190,7 +190,11 @@ algorithm are in [SPEC.md](SPEC.md).
 gives byte-exact signed tokens and expected outcomes (including the
 temporal/expiry edge cases) so you can verify your implementation matches
 this one without needing to ask. This Python SDK enforces itself against
-the same file on every test run.
+the same file on every test run — as does [`ts/`](ts/), a TypeScript
+reference implementation with the same zero-dependency philosophy (Ed25519
+via the standard Web Crypto API, no npm crypto package required), currently
+covering the core protocol (issue/verify/parse, capability and parameter
+checks) but not yet `KeyRegistry` or `RevocationStore`.
 
 ## SwarmBench: does this actually stop anything?
 
@@ -248,6 +252,9 @@ swarmauth/
 │   └── verify_release_artifact.py    # required before tagging a release -- see CONTRIBUTING.md
 ├── spec/
 │   └── test-vectors/                # byte-exact cross-language interop vectors; see its own README
+├── ts/                               # TypeScript reference implementation; see its own README
+│   ├── src/
+│   └── test/vectors.test.ts          # runs against the same spec/test-vectors/vectors.json
 ├── swarmauth/
 │   ├── __init__.py
 │   ├── crypto.py                   # Ed25519 keypairs, signing, verification
