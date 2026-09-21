@@ -186,6 +186,12 @@ sequenceDiagram
 Full claims schema, canonicalization rules, and the complete verification
 algorithm are in [SPEC.md](SPEC.md).
 
+**Implementing JCT in another language?** [`spec/test-vectors/`](spec/test-vectors/)
+gives byte-exact signed tokens and expected outcomes (including the
+temporal/expiry edge cases) so you can verify your implementation matches
+this one without needing to ask. This Python SDK enforces itself against
+the same file on every test run.
+
 ## SwarmBench: does this actually stop anything?
 
 [`benchmarks/swarmbench.py`](benchmarks/swarmbench.py) runs a runnable
@@ -237,7 +243,11 @@ swarmauth/
 ├── tox.ini                          # reproduce every CI job locally: tox -e lint / py312 / frameworks / redis-live
 ├── .github/workflows/ci.yml        # tests + benchmark + live-Redis job on every push/PR
 ├── scripts/
-│   └── audit_deps.py                # pip-audit wrapper used by CI's `lint` job and `tox -e lint`
+│   ├── audit_deps.py                # pip-audit wrapper used by CI's `lint` job and `tox -e lint`
+│   ├── generate_test_vectors.py      # regenerates spec/test-vectors/vectors.json
+│   └── verify_release_artifact.py    # required before tagging a release -- see CONTRIBUTING.md
+├── spec/
+│   └── test-vectors/                # byte-exact cross-language interop vectors; see its own README
 ├── swarmauth/
 │   ├── __init__.py
 │   ├── crypto.py                   # Ed25519 keypairs, signing, verification
@@ -256,6 +266,8 @@ swarmauth/
     ├── test_middleware.py
     ├── test_registry.py
     ├── test_revocation.py
+    ├── test_public_api.py             # every swarmauth.exceptions.* class must be exported at top level
+    ├── test_spec_vectors.py            # enforces spec/test-vectors/vectors.json against this implementation
     ├── test_redis_backend.py         # runs against fakeredis, or a real server in CI
     └── test_framework_adapters.py    # real LangChain, ag2, and MCP integration tests
 ```

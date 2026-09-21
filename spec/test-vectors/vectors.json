@@ -1,0 +1,191 @@
+{
+  "spec_version": "0.1.0-draft",
+  "generated_by": "scripts/generate_test_vectors.py",
+  "warning": "issuer_private_key_seed_hex below is a fixed, non-secret, deliberately unmysterious test seed (bytes(range(32))). NEVER use it for anything but verifying an implementation against these vectors.",
+  "issuer_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "issuer_public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "vectors": [
+    {
+      "name": "minimal_valid",
+      "valid": true,
+      "description": "Minimal token: one exact capability, empty constraints. 'valid' here means correct signature/schema/canonicalization -- iat/exp are fixed for byte-reproducibility, so check TTL/expiry math against these values yourself rather than expecting a live verify() call to accept this token as currently fresh.",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "max_calls": null,
+          "max_amount_usd": null,
+          "rate_limit_per_min": null,
+          "allowed_params": {}
+        },
+        "iat": 1700000000,
+        "exp": 1700000060,
+        "jti": "vector-minimal-0001"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDA2MCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItbWluaW1hbC0wMDAxIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDA2MCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItbWluaW1hbC0wMDAxIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9.B57hE91WynBUIS7IvM4_ef2nekIR8ZiKbytk5jjZM4PQPkyVsDifrGgyBVFYviKHwYO4SDyk8bJalQo7hizQAQ"
+    },
+    {
+      "name": "full_constraints_and_wildcard",
+      "valid": true,
+      "description": "Wildcard capability, all four constraint fields populated, exp-iat at the 300s ceiling exactly. Same freshness caveat as minimal_valid: iat/exp are fixed, not currently fresh.",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:*"
+        ],
+        "constraints": {
+          "max_calls": 3,
+          "max_amount_usd": 250.5,
+          "rate_limit_per_min": 10,
+          "allowed_params": {
+            "destination_account": "acct_123"
+          }
+        },
+        "iat": 1700000000,
+        "exp": 1700000300,
+        "jti": "vector-full-constraints-0002"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDoqIl0sImNvbnN0cmFpbnRzIjp7ImFsbG93ZWRfcGFyYW1zIjp7ImRlc3RpbmF0aW9uX2FjY291bnQiOiJhY2N0XzEyMyJ9LCJtYXhfYW1vdW50X3VzZCI6MjUwLjUsIm1heF9jYWxscyI6MywicmF0ZV9saW1pdF9wZXJfbWluIjoxMH0sImV4cCI6MTcwMDAwMDMwMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItZnVsbC1jb25zdHJhaW50cy0wMDAyIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDoqIl0sImNvbnN0cmFpbnRzIjp7ImFsbG93ZWRfcGFyYW1zIjp7ImRlc3RpbmF0aW9uX2FjY291bnQiOiJhY2N0XzEyMyJ9LCJtYXhfYW1vdW50X3VzZCI6MjUwLjUsIm1heF9jYWxscyI6MywicmF0ZV9saW1pdF9wZXJfbWluIjoxMH0sImV4cCI6MTcwMDAwMDMwMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItZnVsbC1jb25zdHJhaW50cy0wMDAyIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9.3gphl7BIsQkOkWYZkCUsadvTcZD8deYrntIG0T_fJybgiAPEGQSjTfgYLLlFM_NJA5i-fvRtVvJsj08xjY1DBw"
+    },
+    {
+      "name": "ttl_exceeds_max",
+      "valid": false,
+      "description": "exp - iat = 301 > MAX_TTL_SECONDS (300). Rejected on this ground alone, independent of wall-clock time, so this vector never goes stale.",
+      "error_code": "TOKEN_EXPIRED",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "max_calls": null,
+          "max_amount_usd": null,
+          "rate_limit_per_min": null,
+          "allowed_params": {}
+        },
+        "iat": 1700000000,
+        "exp": 1700000301,
+        "jti": "vector-ttl-exceeded-0003"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDMwMSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItdHRsLWV4Y2VlZGVkLTAwMDMiLCJzdWIiOiJ0b29sOnByb2Nlc3NfcGF5b3V0In0",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDMwMSwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItdHRsLWV4Y2VlZGVkLTAwMDMiLCJzdWIiOiJ0b29sOnByb2Nlc3NfcGF5b3V0In0.UCgHhYdK94GNQ83pxBKYA-j_HR53vM8rAMkf1MkZQhCoyPtlVD5mBObs7IfeN383dn2uf7jC0gLaKwfdusz8CQ"
+    },
+    {
+      "name": "tampered_signature",
+      "valid": false,
+      "description": "Valid header/payload, signature's first base64url character flipped.",
+      "error_code": "INVALID_SIGNATURE",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "max_calls": null,
+          "max_amount_usd": null,
+          "rate_limit_per_min": null,
+          "allowed_params": {}
+        },
+        "iat": 1700000000,
+        "exp": 1700000060,
+        "jti": "vector-tampered-sig-0004"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDA2MCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItdGFtcGVyZWQtc2lnLTAwMDQiLCJzdWIiOiJ0b29sOnByb2Nlc3NfcGF5b3V0In0",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDA2MCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItdGFtcGVyZWQtc2lnLTAwMDQiLCJzdWIiOiJ0b29sOnByb2Nlc3NfcGF5b3V0In0.AdGsB9vGlz96GrZUCo-LlLg4EbmWY4TvMZ9N6l0wHFj-DZjPJoXJGRf7dbbzGuo801yTGV_CBevoaZzUDuEEDw"
+    },
+    {
+      "name": "malformed_two_segments",
+      "valid": false,
+      "description": "Only 2 dot-separated segments instead of 3.",
+      "error_code": "MALFORMED_TOKEN",
+      "token": "not-a-valid-token.missing-the-third-segment"
+    }
+  ],
+  "temporal_test_cases": [
+    {
+      "name": "ttl_ceiling_exact_300_is_ok",
+      "iat": 1000,
+      "exp": 1300,
+      "leeway_seconds": 2,
+      "now": 1150,
+      "expect_valid": true,
+      "reason": "exp - iat == 300 (MAX_TTL_SECONDS), the ceiling itself, not over it."
+    },
+    {
+      "name": "ttl_ceiling_301_rejected",
+      "iat": 1000,
+      "exp": 1301,
+      "leeway_seconds": 2,
+      "now": 1150,
+      "expect_valid": false,
+      "error_code": "TOKEN_EXPIRED",
+      "reason": "exp - iat == 301 > MAX_TTL_SECONDS. Checked before, and independent of, now."
+    },
+    {
+      "name": "not_yet_valid",
+      "iat": 1000,
+      "exp": 1060,
+      "leeway_seconds": 2,
+      "now": 997,
+      "expect_valid": false,
+      "error_code": "TOKEN_NOT_YET_VALID",
+      "reason": "now (997) < iat (1000) - leeway (2) == 998."
+    },
+    {
+      "name": "not_yet_valid_leeway_boundary_ok",
+      "iat": 1000,
+      "exp": 1060,
+      "leeway_seconds": 2,
+      "now": 998,
+      "expect_valid": true,
+      "reason": "now (998) == iat (1000) - leeway (2), the boundary itself is accepted."
+    },
+    {
+      "name": "expired_past_leeway",
+      "iat": 1000,
+      "exp": 1060,
+      "leeway_seconds": 2,
+      "now": 1063,
+      "expect_valid": false,
+      "error_code": "TOKEN_EXPIRED",
+      "reason": "now (1063) > exp (1060) + leeway (2) == 1062."
+    },
+    {
+      "name": "expired_leeway_boundary_ok",
+      "iat": 1000,
+      "exp": 1060,
+      "leeway_seconds": 2,
+      "now": 1062,
+      "expect_valid": true,
+      "reason": "now (1062) == exp (1060) + leeway (2), the boundary itself is accepted."
+    }
+  ]
+}
