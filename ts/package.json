@@ -1,0 +1,43 @@
+{
+  "name": "@swarmauth/core",
+  "version": "0.1.0",
+  "description": "TypeScript reference implementation of the SwarmAuth JSON Capability Token (JCT) protocol -- signed, short-lived, capability-scoped delegation tokens for agent-to-agent and agent-to-tool calls.",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=19"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/vectors.test.js"
+  },
+  "keywords": [
+    "ai-agents",
+    "security",
+    "authorization",
+    "multi-agent",
+    "llm",
+    "ed25519",
+    "capability-token"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/waspdrey/swarmauth.git",
+    "directory": "ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
