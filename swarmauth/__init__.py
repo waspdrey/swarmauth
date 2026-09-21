@@ -11,6 +11,7 @@ from swarmauth.exceptions import (
     TokenExpiredError,
     TokenNotYetValidError,
     TokenRevokedError,
+    UnknownIssuerError,
 )
 from swarmauth.middleware import TokenIssuer, guard
 from swarmauth.revocation import InMemoryRevocationStore, RevocationStore
@@ -32,6 +33,7 @@ __all__ = [
     "TokenExpiredError",
     "TokenNotYetValidError",
     "TokenRevokedError",
+    "UnknownIssuerError",
     "CapabilityViolationError",
     "ConstraintViolationError",
     "AudienceMismatchError",
