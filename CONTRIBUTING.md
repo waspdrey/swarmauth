@@ -107,7 +107,11 @@ the bottom of `main()` still hold.
   temporal case covering the change — other-language implementations check
   themselves against that file, so a protocol change it doesn't reflect is
   a silent break for them. `tests/test_spec_vectors.py` enforces the file
-  stays in sync with this implementation.
+  stays in sync with this implementation, and `ts/test/vectors.test.ts`
+  enforces it against the TypeScript reference implementation too (`cd ts
+  && npm test`) — update `ts/src/` in the same PR if the change affects
+  its ported surface (currently issue/verify/parse and capability/param
+  checks; `ts/README.md` lists what's not ported yet).
 - **New framework adapters** should ship with a real-install integration
   test in `tests/test_framework_adapters.py` (or a new file, if the
   dependency is heavy enough to warrant its own opt-in extra), not a mock of
