@@ -282,6 +282,12 @@ swarmauth/
 - Tokens are data, not infrastructure: no required network call, no
   mandatory central service. Self-issuance and centralized-issuer
   deployments use the exact same token format and verification code.
+- **The protocol stays free and self-hostable, permanently.** The goal is
+  for other agent frameworks and platforms to embed JCT verification
+  natively, not to depend on a hosted SwarmAuth service — that only works
+  if there's nothing to eventually paywall or deprecate out from under
+  them. MIT-licensed, no CLA, no planned "open core" split that moves the
+  verification algorithm itself behind a subscription.
 
 ## Status
 
