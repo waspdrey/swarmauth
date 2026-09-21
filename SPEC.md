@@ -3,6 +3,14 @@
 **Version:** 0.1.0-draft
 **Status:** MVP / Request for Comments
 
+This is the *protocol's* version, separate from the Python SDK's package
+version (`swarmauth` on PyPI, currently newer than this number) -- it only
+advances on a backwards-incompatible change to the wire format itself (see
+§12). The SDK has shipped several releases (new capabilities, bug fixes,
+CI tooling) without changing the token format or verification algorithm,
+so the protocol version correctly hasn't moved; a mismatch here is
+expected, not stale documentation.
+
 ## 1. Abstract
 
 SwarmAuth defines a compact, signed **Capability Token** format and a
