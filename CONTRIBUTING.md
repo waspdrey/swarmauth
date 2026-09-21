@@ -135,18 +135,27 @@ without the API-stability guarantee `1.0.0` will carry.
   version strings to match, add a fresh empty `[Unreleased]` above it, open
   a GitHub Release with that tag — `publish.yml` builds and publishes to
   PyPI via trusted publishing (OIDC) on release, no manual `twine upload`.
-- Before tagging a release, build and sanity-check the actual artifact
-  locally, since CI testing an editable install (`pip install -e .`) can
-  miss packaging bugs an installed wheel would hit:
+- **Before tagging a release, verify the actual built artifact -- not the
+  editable dev install.** `0.1.5` shipped with `UnknownIssuerError` missing
+  from `swarmauth`'s top-level exports because nothing had ever installed
+  the real wheel and run the suite against it; CI's editable install
+  happened to behave identically to a real install for that bug, which is
+  exactly the trap. `scripts/verify_release_artifact.py` is the gate:
 
   ```bash
-  rm -rf dist build
+  rm -rf dist build swarmauth.egg-info
   python -m build
   twine check dist/*
-  python -m venv /tmp/swarmauth-release-check
-  /tmp/swarmauth-release-check/bin/pip install dist/*.whl
-  /tmp/swarmauth-release-check/bin/python -c "import swarmauth; print(swarmauth.__version__)"
+  python scripts/verify_release_artifact.py
   ```
+
+  It installs the built wheel into a throwaway venv, copies `tests/`
+  *outside* the repo before running pytest against it (so a stray
+  `sys.path` entry can't silently resolve imports back to the repo's own
+  source instead of the installed package -- a real trap: running pytest
+  from inside the repo directory does exactly this), and fails loudly if
+  anything doesn't pass or if the install didn't actually come from the
+  wheel. Do not tag or publish a release this script hasn't passed for.
 
 ## Reporting a vulnerability
 

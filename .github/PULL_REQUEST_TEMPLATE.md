@@ -14,8 +14,10 @@ guide.
 - [ ] `CHANGELOG.md` updated under `[Unreleased]` (or this PR intentionally
       needs no changelog entry -- e.g. docs-only, CI-only)
 - [ ] If this PR is the one cutting a release: version bumped in
-      `pyproject.toml` **and** `swarmauth/__init__.py` (must match), and the
-      `[Unreleased]` section retitled to that version + today's date
+      `pyproject.toml` **and** `swarmauth/__init__.py` (must match), the
+      `[Unreleased]` section retitled to that version + today's date, and
+      `python scripts/verify_release_artifact.py` passed against a fresh
+      build (not just the editable dev install) before tagging
 - [ ] If this changes the wire protocol, verification algorithm, or claims
       schema: `SPEC.md` updated to match
 - [ ] If this adds/changes public API: `README.md` updated to match
