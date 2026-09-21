@@ -17,7 +17,7 @@ from swarmauth.middleware import TokenIssuer, guard
 from swarmauth.revocation import InMemoryRevocationStore, RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 __all__ = [
     "KeyPair",

@@ -1,6 +1,6 @@
 [project]
 name = "swarmauth"
-version = "0.1.5"
+version = "0.1.6"
 description = "OAuth 2.1 for autonomous AI agent swarms: signed, short-lived, capability-scoped delegation tokens."
 readme = "README.md"
 requires-python = ">=3.10"

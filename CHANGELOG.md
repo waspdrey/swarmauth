@@ -12,6 +12,21 @@ Nothing yet. Add entries here as changes land, under `### Added` /
 section under a new `## [x.y.z] - YYYY-MM-DD` heading only at release time,
 choosing the version number then, not before.
 
+## [0.1.6] - 2026-09-21
+
+### Fixed
+
+- **Bug**: `UnknownIssuerError` — raised by `CapabilityToken.verify(...,
+  key_registry=...)` and `KeyRegistry`, and documented as such — was never
+  exported from top-level `swarmauth`, unlike every sibling exception.
+  `from swarmauth import UnknownIssuerError` raised `ImportError`; use
+  `swarmauth.exceptions.UnknownIssuerError` if pinned to `0.1.5`. Found by
+  smoke-testing the published package from a clean install outside the
+  dev tree — no existing test imported from top-level `swarmauth`, only
+  from submodules, so nothing exercised `__init__.py`'s actual export
+  list. Added `tests/test_public_api.py` to catch this class of bug for
+  any future exception, not just this one.
+
 ## [0.1.5] - 2026-09-21
 
 ### Added
@@ -81,6 +96,7 @@ Initial release.
   `secure_autogen_function`, `secure_mcp_tool` — each a thin, dependency-free
   wrapper tested against real LangChain, ag2, and MCP installs.
 
+[0.1.6]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.6
 [0.1.5]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.5
 [0.1.2]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.2
 [0.1.1]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.1
