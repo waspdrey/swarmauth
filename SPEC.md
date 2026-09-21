@@ -211,19 +211,29 @@ as an unscoped credential would.
 
 ## 7. Error Conditions
 
-Reference SDK exception types (all subclass `SwarmAuthError`):
+Error semantics are protocol-level and language-independent; the `Code`
+column is the stable identifier an implementation in any language should
+use (e.g. as an enum, error subtype, or discriminant), separate from
+whatever a particular SDK happens to name its exception class. The
+`Exception` column shows the reference Python SDK's mapping, given for
+concreteness, not as the normative name:
 
-| Exception | Raised when |
-|---|---|
-| `MalformedTokenError` | Token isn't 3 valid base64url/JSON segments matching the schema. |
-| `InvalidSignatureError` | Ed25519 verification fails. |
-| `TokenExpiredError` | `now > exp + leeway`, or `exp - iat > 300`. |
-| `TokenNotYetValidError` | `now < iat - leeway`. |
-| `TokenRevokedError` | A revocation store (§9) was supplied and `jti` is revoked. |
-| `AudienceMismatchError` | `sub != audience`. |
-| `UnknownIssuerError` | Verifying against a `KeyRegistry` (§8) that has no key registered for `claims.iss` at all. |
-| `CapabilityViolationError` | Required capability not in `capabilities`. |
-| `ConstraintViolationError` | `max_calls`, `max_amount_usd`, `rate_limit_per_min`, or `allowed_params` would be violated. |
+| Code | Exception (reference SDK) | Raised when |
+|---|---|---|
+| `MALFORMED_TOKEN` | `MalformedTokenError` | Token isn't 3 valid base64url/JSON segments matching the schema. |
+| `INVALID_SIGNATURE` | `InvalidSignatureError` | Ed25519 verification fails. |
+| `TOKEN_EXPIRED` | `TokenExpiredError` | `now > exp + leeway`, or `exp - iat > 300`. |
+| `TOKEN_NOT_YET_VALID` | `TokenNotYetValidError` | `now < iat - leeway`. |
+| `TOKEN_REVOKED` | `TokenRevokedError` | A revocation store (§9) was supplied and `jti` is revoked. |
+| `AUDIENCE_MISMATCH` | `AudienceMismatchError` | `sub != audience`. |
+| `UNKNOWN_ISSUER` | `UnknownIssuerError` | Verifying against a `KeyRegistry` (§8) that has no key registered for `claims.iss` at all. |
+| `CAPABILITY_VIOLATION` | `CapabilityViolationError` | Required capability not in `capabilities`. |
+| `CONSTRAINT_VIOLATION` | `ConstraintViolationError` | `max_calls`, `max_amount_usd`, `rate_limit_per_min`, or `allowed_params` would be violated. |
+
+`spec/test-vectors/vectors.json` (see [spec/test-vectors/README.md](spec/test-vectors/README.md))
+gives signed tokens and expected outcomes keyed by these same codes, so an
+implementation can confirm it reproduces this table's behavior exactly
+without needing to ask this repo anything further.
 
 ## 8. Key Registry and Rotation
 

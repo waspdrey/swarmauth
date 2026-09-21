@@ -102,7 +102,12 @@ the bottom of `main()` still hold.
 - **Protocol changes** (anything touching the claims schema, canonicalization,
   or verification algorithm in `swarmauth/token.py`) must be reflected in
   [SPEC.md](SPEC.md) in the same PR — the spec is the source of truth, not
-  the code's docstrings.
+  the code's docstrings. Also regenerate `spec/test-vectors/vectors.json`
+  (`python scripts/generate_test_vectors.py`) and add a new vector or
+  temporal case covering the change — other-language implementations check
+  themselves against that file, so a protocol change it doesn't reflect is
+  a silent break for them. `tests/test_spec_vectors.py` enforces the file
+  stays in sync with this implementation.
 - **New framework adapters** should ship with a real-install integration
   test in `tests/test_framework_adapters.py` (or a new file, if the
   dependency is heavy enough to warrant its own opt-in extra), not a mock of
