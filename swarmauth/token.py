@@ -19,13 +19,16 @@ from pydantic import BaseModel, Field, field_validator
 from swarmauth.crypto import KeyPair, b64url_decode, b64url_encode, generate_jti, verify_signature
 from swarmauth.exceptions import (
     AudienceMismatchError,
+    CapabilityViolationError,
+    ConstraintViolationError,
     InvalidSignatureError,
     MalformedTokenError,
     TokenExpiredError,
     TokenNotYetValidError,
+    TokenRevokedError,
 )
-from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
 from swarmauth.registry import KeyRegistry
+from swarmauth.revocation import RevocationStore
 
 TOKEN_TYPE = "JCT"  # JSON Capability Token
 ALG = "EdDSA"
@@ -56,7 +59,7 @@ class Constraints(BaseModel):
 class CapabilityClaims(BaseModel):
     """The signed payload of a Capability Token."""
 
-    iss: str = Field(..., description="Issuer agent ID, e.g. 'agent:sales-agent-01'.")
+    iss: str = Field(..., description="Issuer agent ID, e.g. 'agent:requester-01'.")
     sub: str = Field(
         ..., description="Target agent/tool ID this token authorizes calling into, e.g. 'tool:process_payout'."
     )
@@ -160,6 +163,7 @@ class CapabilityToken:
         *,
         issuer_public_key: Optional[bytes] = None,
         key_registry: Optional[KeyRegistry] = None,
+        revocation_store: Optional[RevocationStore] = None,
         audience: Optional[str] = None,
         leeway_seconds: int = 2,
     ) -> CapabilityClaims:
@@ -170,8 +174,14 @@ class CapabilityToken:
         `claims.iss`, supporting multiple issuers and key rotation) must be
         given.
 
+        ``revocation_store``, when supplied, is checked after signature and
+        lifetime validation so an incident-response system can immediately
+        invalidate a specific token. Use a shared store for multi-process
+        verifiers.
+
         Raises MalformedTokenError, InvalidSignatureError, UnknownIssuerError,
-        TokenExpiredError, TokenNotYetValidError, or AudienceMismatchError.
+        TokenExpiredError, TokenNotYetValidError, TokenRevokedError, or
+        AudienceMismatchError.
         """
         if (issuer_public_key is None) == (key_registry is None):
             raise ValueError("Pass exactly one of issuer_public_key or key_registry")
@@ -187,6 +197,7 @@ class CapabilityToken:
                     f"trusted key(s) for issuer '{claims.iss}'"
                 )
         else:
+            assert issuer_public_key is not None  # guaranteed by the XOR check above
             verify_signature(issuer_public_key, signing_input, signature)
 
         if claims.exp - claims.iat > MAX_TTL_SECONDS:
@@ -197,6 +208,9 @@ class CapabilityToken:
             raise TokenNotYetValidError(f"Token not valid until {claims.iat}, now is {now}")
         if now > claims.exp + leeway_seconds:
             raise TokenExpiredError(f"Token expired at {claims.exp}, now is {now}")
+
+        if revocation_store is not None and revocation_store.is_revoked(claims.jti):
+            raise TokenRevokedError(f"Token '{claims.jti}' has been revoked")
 
         if audience is not None and claims.sub != audience:
             raise AudienceMismatchError(f"Token audience '{claims.sub}' does not match '{audience}'")

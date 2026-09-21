@@ -1,6 +1,6 @@
 [project]
 name = "swarmauth"
-version = "0.1.2"
+version = "0.1.5"
 description = "OAuth 2.1 for autonomous AI agent swarms: signed, short-lived, capability-scoped delegation tokens."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "fakeredis>=2.20"]
+dev = ["pytest>=8.0", "fakeredis>=2.20", "ruff>=0.6", "mypy>=1.10", "pip-audit>=2.7"]
 # Only needed to run tests/test_framework_adapters.py against real installs;
 # not required to use swarmauth itself (see swarmauth/middleware.py).
 frameworks = ["langchain-core>=0.3", "ag2>=1.0", "mcp>=1.0"]
@@ -52,3 +52,25 @@ swarmauth = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+# UP (pyupgrade) is deliberately excluded: the codebase consistently uses
+# `typing.Optional`/`Union` and quoted forward references, not `X | None`.
+# Flipping that repo-wide is a stylistic rewrite, not a bug fix.
+select = ["E", "F", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Imports are intentionally placed after each dependency's importorskip()
+# call, in the order the test narrates them -- not alphabetical.
+"tests/test_framework_adapters.py" = ["I001"]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["swarmauth"]
+strict = true
+warn_unused_ignores = true
+disallow_untyped_defs = true

@@ -8,6 +8,8 @@ around it.
 from __future__ import annotations
 
 import functools
+import inspect
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -16,9 +18,51 @@ from typing import Any, Callable, Optional, TypeVar
 from swarmauth.crypto import KeyPair
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
 from swarmauth.registry import KeyRegistry
+from swarmauth.revocation import RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability, check_params
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _validated_amount(amount: Any) -> float:
+    """Return a safe amount for cumulative-budget accounting.
+
+    IEEE-754 non-finite values do not behave like ordinary monetary amounts:
+    comparisons with ``nan`` are false, which could bypass a budget ceiling
+    and poison subsequent accounting. Negative values would similarly reduce
+    a cumulative spend total. They are never valid inputs to a ``max_amount``
+    constraint.
+    """
+    try:
+        parsed = float(amount)
+    except (TypeError, ValueError) as exc:
+        raise ConstraintViolationError(
+            f"Amount {amount!r} is not a finite, non-negative number",
+            constraint="max_amount_usd",
+        ) from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ConstraintViolationError(
+            f"Amount {amount!r} is not a finite, non-negative number",
+            constraint="max_amount_usd",
+        )
+    return parsed
+
+
+def _bound_call_params(signature: inspect.Signature, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Bind a call to its declared signature for constraint enforcement.
+
+    ``kwargs`` alone is not a complete view of a Python call: parameter
+    constraints must also apply when a caller supplies positional arguments.
+    Flatten ``**kwargs`` so its individual runtime parameters remain visible
+    to ``allowed_params``.
+    """
+    bound = signature.bind(*args, **kwargs)
+    bound.apply_defaults()
+    params = dict(bound.arguments)
+    for name, parameter in signature.parameters.items():
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            params.update(params.pop(name, {}))
+    return params
 
 
 class TokenIssuer:
@@ -50,7 +94,7 @@ class TokenIssuer:
 class _TokenUsage:
     call_count: int = 0
     spent_amount: float = 0.0
-    call_timestamps: list = field(default_factory=list)
+    call_timestamps: list[float] = field(default_factory=list)
 
 
 class UsageTracker:
@@ -108,6 +152,7 @@ def verify_and_check(
     *,
     issuer_public_key: Optional[bytes] = None,
     key_registry: Optional[KeyRegistry] = None,
+    revocation_store: Optional[RevocationStore] = None,
     audience: Optional[str] = None,
     required_capability: Optional[str] = None,
     amount: float = 0.0,
@@ -126,17 +171,21 @@ def verify_and_check(
     agent's LLM decided to do.
     """
     claims = CapabilityToken.verify(
-        token, issuer_public_key=issuer_public_key, key_registry=key_registry, audience=audience
+        token,
+        issuer_public_key=issuer_public_key,
+        key_registry=key_registry,
+        revocation_store=revocation_store,
+        audience=audience,
     )
 
     if required_capability is not None:
         check_capability(claims, required_capability)
 
-    if params:
+    if params is not None:
         check_params(claims, params)
 
     if tracker is not None:
-        tracker.check_and_record(claims, amount=amount)
+        tracker.check_and_record(claims, amount=_validated_amount(amount))
 
     return claims
 
@@ -146,6 +195,7 @@ def guard(
     *,
     issuer_public_key: Optional[bytes] = None,
     key_registry: Optional[KeyRegistry] = None,
+    revocation_store: Optional[RevocationStore] = None,
     audience: Optional[str] = None,
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
@@ -156,7 +206,8 @@ def guard(
 
     Pass exactly one of `issuer_public_key` (single trusted issuer) or
     `key_registry` (many issuers, with key-rotation support -- see
-    `swarmauth.registry.KeyRegistry`).
+    `swarmauth.registry.KeyRegistry`). Optionally pass a ``revocation_store``
+    to reject a specifically revoked token before execution.
 
     The wrapped function must be called with the token as a keyword argument
     (`token_kwarg`, default "token"); it is stripped before the underlying
@@ -166,6 +217,8 @@ def guard(
     """
 
     def decorator(func: F) -> F:
+        signature = inspect.signature(func)
+
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             token = kwargs.pop(token_kwarg, None)
@@ -174,15 +227,17 @@ def guard(
                     f"No JCT supplied (expected kwarg '{token_kwarg}')", required=capability
                 )
 
-            amount = float(kwargs.get(amount_kwarg, 0.0)) if amount_kwarg else 0.0
+            params = _bound_call_params(signature, args, kwargs)
+            amount = params.get(amount_kwarg, 0.0) if amount_kwarg else 0.0
             verify_and_check(
                 token,
                 issuer_public_key=issuer_public_key,
                 key_registry=key_registry,
+                revocation_store=revocation_store,
                 audience=audience,
                 required_capability=capability,
                 amount=amount,
-                params=kwargs,
+                params=params,
                 tracker=tracker,
             )
             return func(*args, **kwargs)
@@ -219,6 +274,7 @@ def secure_tool_call(
     capability: str,
     issuer_public_key: Optional[bytes] = None,
     key_registry: Optional[KeyRegistry] = None,
+    revocation_store: Optional[RevocationStore] = None,
     audience: Optional[str] = None,
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
@@ -239,6 +295,7 @@ def secure_tool_call(
         capability,
         issuer_public_key=issuer_public_key,
         key_registry=key_registry,
+        revocation_store=revocation_store,
         audience=audience,
         tracker=tracker,
         token_kwarg=token_kwarg,

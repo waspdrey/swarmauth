@@ -17,13 +17,14 @@ Requires the optional `redis` extra: pip install -e ".[dev,redis]"
 from __future__ import annotations
 
 import os
+import time
 
 import pytest
 
 fakeredis = pytest.importorskip("fakeredis", reason="pip install -e '.[dev,redis]' to run Redis backend tests")
 redis = pytest.importorskip("redis", reason="pip install -e '.[dev,redis]' to run Redis backend tests")
 
-from swarmauth.backends.redis_backend import RedisUsageTracker  # noqa: E402
+from swarmauth.backends.redis_backend import RedisRevocationStore, RedisUsageTracker  # noqa: E402
 from swarmauth.crypto import KeyPair  # noqa: E402
 from swarmauth.exceptions import ConstraintViolationError  # noqa: E402
 from swarmauth.token import CapabilityToken, Constraints  # noqa: E402
@@ -162,3 +163,34 @@ def test_retries_on_a_genuine_watch_error_and_then_succeeds(redis_client, fake_s
     assert interference_done["done"]
     # 1 from the concurrent writer + 1 from our own successful retry.
     assert redis_client.hget(hash_key, "calls") == b"2"
+
+
+def test_revocation_store_reports_unrevoked_jti_as_not_revoked(redis_client):
+    store = RedisRevocationStore(redis_client)
+    assert store.is_revoked("jti-1") is False
+
+
+def test_revocation_store_revokes_until_expiry(redis_client):
+    store = RedisRevocationStore(redis_client)
+    store.revoke("jti-1", expires_at=int(time.time()) + 60)
+    assert store.is_revoked("jti-1") is True
+
+
+def test_revocation_store_skips_writing_an_already_expired_revocation(redis_client):
+    store = RedisRevocationStore(redis_client)
+    store.revoke("jti-1", expires_at=int(time.time()) - 5)
+    assert store.is_revoked("jti-1") is False
+
+
+def test_revocation_store_key_gets_a_ttl_matching_the_signed_expiry(redis_client):
+    store = RedisRevocationStore(redis_client)
+    store.revoke("jti-1", expires_at=int(time.time()) + 60)
+    assert 0 < redis_client.ttl("swarmauth:revoked:jti-1") <= 60
+
+
+def test_revocation_store_is_shared_across_independent_clients(redis_client, fake_server):
+    store = RedisRevocationStore(redis_client)
+    store.revoke("jti-1", expires_at=int(time.time()) + 60)
+
+    other_store = RedisRevocationStore(_second_client(fake_server))
+    assert other_store.is_revoked("jti-1") is True

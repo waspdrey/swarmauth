@@ -71,7 +71,7 @@ def test_langchain_structured_tool_func_executes_with_valid_token():
     tool = secure_langchain_tool(
         _make_payout_structured_tool(), capability="tool:process_payout", issuer_public_key=kp.public_bytes
     )
-    token = issuer.issue(iss="agent:sales", sub="tool:process_payout", capabilities=["tool:process_payout"])
+    token = issuer.issue(iss="agent:a", sub="tool:process_payout", capabilities=["tool:process_payout"])
 
     # The token is never part of the LLM-facing schema (see module docstring
     # of swarmauth.middleware): the calling agent's runtime -- not the model --
@@ -87,7 +87,7 @@ def test_langchain_structured_tool_constraint_blocks_wrong_destination():
         _make_payout_structured_tool(), capability="tool:process_payout", issuer_public_key=kp.public_bytes
     )
     token = issuer.issue(
-        iss="agent:sales",
+        iss="agent:a",
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         constraints=Constraints(allowed_params={"destination_account": "acct_1"}),
@@ -121,7 +121,7 @@ def test_langchain_base_tool_run_branch_allowed_with_token():
     kp = KeyPair.generate()
     issuer = TokenIssuer(kp)
     tool = secure_langchain_tool(ReadInvoiceTool(), capability="tool:read_invoice", issuer_public_key=kp.public_bytes)
-    token = issuer.issue(iss="agent:sales", sub="tool:read_invoice", capabilities=["tool:read_invoice"])
+    token = issuer.issue(iss="agent:a", sub="tool:read_invoice", capabilities=["tool:read_invoice"])
     assert tool._run(invoice_id="INV-1", token=token) == "invoice INV-1: $100 due"
 
 
@@ -220,5 +220,5 @@ def test_secure_mcp_tool_executes_with_valid_token():
     guarded = secure_mcp_tool(process_payout, capability="tool:process_payout", issuer_public_key=kp.public_bytes)
     server.tool()(guarded)
 
-    token = issuer.issue(iss="agent:sales", sub="tool:process_payout", capabilities=["tool:process_payout"])
+    token = issuer.issue(iss="agent:a", sub="tool:process_payout", capabilities=["tool:process_payout"])
     assert guarded(destination_account="acct_1", amount_usd=5.0, token=token) == "sent 5.0 to acct_1"

@@ -12,7 +12,6 @@ revoked or the registry drops it.
 from __future__ import annotations
 
 import threading
-from typing import Optional
 
 from swarmauth.exceptions import UnknownIssuerError
 

@@ -10,11 +10,13 @@ from swarmauth.exceptions import (
     SwarmAuthError,
     TokenExpiredError,
     TokenNotYetValidError,
+    TokenRevokedError,
 )
 from swarmauth.middleware import TokenIssuer, guard
+from swarmauth.revocation import InMemoryRevocationStore, RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability
 
-__version__ = "0.1.2"
+__version__ = "0.1.5"
 
 __all__ = [
     "KeyPair",
@@ -29,8 +31,11 @@ __all__ = [
     "InvalidSignatureError",
     "TokenExpiredError",
     "TokenNotYetValidError",
+    "TokenRevokedError",
     "CapabilityViolationError",
     "ConstraintViolationError",
     "AudienceMismatchError",
+    "RevocationStore",
+    "InMemoryRevocationStore",
     "__version__",
 ]

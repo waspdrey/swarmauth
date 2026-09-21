@@ -48,6 +48,44 @@ slow CI for one adapter. `secure_crewai_tool` is a direct delegation to
 `secure_langchain_tool`, covered by the same test since CrewAI's `Tool`/
 `BaseTool` classes expose the same `.func`/`._run` shape.
 
+### Running everything locally across Python versions (`tox`)
+
+`tox.ini` mirrors every CI job so you can reproduce a failure locally
+without waiting on a push:
+
+```bash
+pip install tox
+tox                  # py310, py311, py312, py313 (each core suite) + lint
+tox -e py312         # just one Python version
+tox -e frameworks    # tests/test_framework_adapters.py, real installs
+tox -e redis-live    # tests/test_redis_backend.py against a real server
+                      # (set SWARMAUTH_TEST_REDIS_URL first)
+tox -e lint           # ruff + mypy --strict + dependency audit
+```
+
+`tox` only runs the Python versions actually installed on your machine
+(`skip_missing_interpreters = true`) — CI's matrix is still the source of
+truth for all four versions; `pyenv install 3.10 3.11 3.12 3.13` gets you
+full local coverage if you want it.
+
+## Linting, typing, and dependency audit
+
+```bash
+ruff check swarmauth tests
+mypy swarmauth
+python scripts/audit_deps.py
+```
+
+All three run in CI's `lint` job (and `tox -e lint`) and must pass. `mypy`
+runs in `--strict` mode against `swarmauth/` only (not `tests/`) — the
+library ships `Typing :: Typed` (`py.typed`), so its public surface must
+actually be fully typed. `scripts/audit_deps.py` wraps `pip-audit --strict`
+against the resolved dependency tree, excluding `swarmauth` itself (auditing
+your own in-development package by name against PyPI fails before it's
+released, which isn't a real finding — see the script's docstring); if it
+flags something in a real dependency, that blocks merge until resolved
+(bump the pin, or open an issue if no fix exists yet).
+
 ## Running the benchmark
 
 ```bash
@@ -77,6 +115,38 @@ the bottom of `main()` still hold.
 - Keep the zero-exotic-dependency principle: `cryptography` and `pydantic`
   are the only hard runtime dependencies. If a change seems to need
   something else, that's worth discussing in an issue first.
+
+## Versioning and releases
+
+This project follows [Semantic Versioning](https://semver.org/) once
+released to PyPI; pre-1.0, a minor bump (`0.x.0`) signals a new capability
+and a patch bump (`0.1.x`) signals a fix, same as post-1.0 discipline, just
+without the API-stability guarantee `1.0.0` will carry.
+
+- Every change that affects behavior gets an entry under `## [Unreleased]`
+  in `CHANGELOG.md` in the same PR that makes the change — not retroactively
+  when cutting a release. See the PR template checklist.
+- The version number itself is chosen once, at release time, by whoever cuts
+  the release — not earlier, and not as a placeholder "let's call it 0.2.0
+  for now" bump in an unrelated PR. `pyproject.toml`'s `version` and
+  `swarmauth/__init__.py`'s `__version__` must always match; CI's `lint` job
+  enforces this and fails the build on a mismatch.
+- Releasing: retitle `[Unreleased]` to `[x.y.z] - YYYY-MM-DD`, bump both
+  version strings to match, add a fresh empty `[Unreleased]` above it, open
+  a GitHub Release with that tag — `publish.yml` builds and publishes to
+  PyPI via trusted publishing (OIDC) on release, no manual `twine upload`.
+- Before tagging a release, build and sanity-check the actual artifact
+  locally, since CI testing an editable install (`pip install -e .`) can
+  miss packaging bugs an installed wheel would hit:
+
+  ```bash
+  rm -rf dist build
+  python -m build
+  twine check dist/*
+  python -m venv /tmp/swarmauth-release-check
+  /tmp/swarmauth-release-check/bin/pip install dist/*.whl
+  /tmp/swarmauth-release-check/bin/python -c "import swarmauth; print(swarmauth.__version__)"
+  ```
 
 ## Reporting a vulnerability
 

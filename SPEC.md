@@ -88,7 +88,7 @@ base64url(header) . base64url(payload) . base64url(signature)
 
 | Claim | Type | Required | Description |
 |---|---|---|---|
-| `iss` | string | yes | Issuer agent ID, e.g. `"agent:sales-agent-01"`. |
+| `iss` | string | yes | Issuer agent ID, e.g. `"agent:requester-01"`. |
 | `sub` | string | yes | Target agent or tool ID this token authorizes calling into, e.g. `"tool:process_payout"`. The audience. |
 | `capabilities` | string[] | yes, non-empty | Capabilities granted. Exact match (`"tool:read_invoice"`) or a `prefix:*` wildcard (`"tool:*"`). |
 | `constraints` | object | no (defaults empty) | See §3.3. |
@@ -147,40 +147,46 @@ Given a token string `T` and an expected audience `A`, a verifier MUST:
 7. Reject unless `claims.exp - claims.iat <= 300`.
 8. Reject unless `claims.iat - leeway <= now <= claims.exp + leeway`
    (`leeway` defaults to 2 seconds, to absorb clock skew).
-9. If an audience `A` was supplied, reject unless `claims.sub == A`.
-10. Check that the capability required for the attempted action is present
+9. If a revocation store was supplied, reject if `claims.jti` is revoked
+   (§9). This step is skipped when the verifier passes no revocation
+   store — revocation is opt-in, not required to verify a token.
+10. If an audience `A` was supplied, reject unless `claims.sub == A`.
+11. Check that the capability required for the attempted action is present
     in `claims.capabilities` (exact or wildcard match); reject otherwise.
-11. Check any parameters of the attempted call against
+12. Check any parameters of the attempted call against
     `claims.constraints.allowed_params`; reject on mismatch.
-12. Atomically check and update a `jti`-keyed usage record against
+13. Atomically check and update a `jti`-keyed usage record against
     `max_calls`, `max_amount_usd`, and `rate_limit_per_min`; reject if the
     attempted action would violate any of them.
 
-Steps 1–9 are pure functions of the token and require no state. Steps
-10–12 require the verifier's local policy (what capability does *this*
-call require?) and, for constraints, a stateful tracker.
+Steps 1–10 are pure functions of the token (plus, for step 9, the
+revocation store's current state) and require no per-call local policy.
+Steps 11–13 require the verifier's local policy (what capability does
+*this* call require?) and, for constraints, a stateful tracker.
 
 ## 5. Sequence Diagram
 
 ```mermaid
 sequenceDiagram
-    participant A as Agent A (Sales Agent)
+    participant A as Agent A (Requester)
     participant I as SwarmAuth Token Issuer
-    participant B as Agent B / Tool (Finance Agent)
+    participant B as Agent B / Tool (Capability Owner)
 
     A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=300s)
     I->>I: Evaluate policy — is A allowed to request these capabilities against B?
     I-->>A: Signed Capability Token (JCT)
     A->>B: Tool call, with JCT attached (header/metadata)
     B->>B: Verify Ed25519 signature against issuer's trusted public key
-    B->>B: Check exp/iat window, audience (sub == B)
+    B->>B: Check exp/iat window
+    B->>B: Check jti against revocation store, if one is configured
+    B->>B: Check audience (sub == B)
     B->>B: Check required capability is in capabilities
     B->>B: Check constraints (max_calls, max_amount_usd, rate_limit, allowed_params)
-    alt Token valid and capability and constraints satisfied
+    alt Token valid, unrevoked, and capability and constraints satisfied
         B->>B: Execute tool, record usage against jti
         B-->>A: Result
-    else Invalid signature, expired, wrong audience, missing capability, or constraint violated
-        B-->>A: Reject (InvalidSignatureError, TokenExpiredError, CapabilityViolationError, ConstraintViolationError)
+    else Invalid signature, expired, revoked, wrong audience, missing capability, or constraint violated
+        B-->>A: Reject (InvalidSignatureError, TokenExpiredError, TokenRevokedError, CapabilityViolationError, ConstraintViolationError)
     end
 ```
 
@@ -213,6 +219,7 @@ Reference SDK exception types (all subclass `SwarmAuthError`):
 | `InvalidSignatureError` | Ed25519 verification fails. |
 | `TokenExpiredError` | `now > exp + leeway`, or `exp - iat > 300`. |
 | `TokenNotYetValidError` | `now < iat - leeway`. |
+| `TokenRevokedError` | A revocation store (§9) was supplied and `jti` is revoked. |
 | `AudienceMismatchError` | `sub != audience`. |
 | `UnknownIssuerError` | Verifying against a `KeyRegistry` (§8) that has no key registered for `claims.iss` at all. |
 | `CapabilityViolationError` | Required capability not in `capabilities`. |
@@ -247,7 +254,41 @@ A verifier calls `CapabilityToken.verify(token, key_registry=...)` in place
 of `issuer_public_key=...` (exactly one of the two is required); `swarmauth.
 guard(...)` and `verify_and_check(...)` accept the same substitution.
 
-## 9. Distributed Usage Tracking
+## 9. Token Revocation
+
+A JCT's short TTL (§4 step 7) bounds exposure, but 300 seconds is not always
+short enough: an agent may be compromised, a session ended, or a specific
+token issued in error, and a verifier needs to reject that exact `jti`
+immediately rather than wait out its remaining lifetime. Step 9 of the
+verification algorithm (§4) is this check, and it is opt-in: a verifier
+that passes no revocation store performs signature/expiry/audience/
+capability/constraint checks exactly as before this section existed.
+
+The reference SDK ships two interchangeable stores behind the same
+`revoke(jti, *, expires_at)` / `is_revoked(jti) -> bool` shape
+(`swarmauth.revocation.RevocationStore`):
+
+- `swarmauth.revocation.InMemoryRevocationStore` — thread-safe,
+  process-local. Correct for a single verifier process; the
+  zero-dependency default.
+- `swarmauth.backends.redis_backend.RedisRevocationStore` — the same
+  revocation state shared across every verifier process, so a revocation
+  issued against one process is honored by all of them. Requires the
+  optional `redis` extra (`pip install swarmauth[redis]`).
+
+Both stores key a revocation by `jti` under a TTL equal to the token's own
+`exp` — a JCT can never legitimately be presented again after its own
+expiry, so there is never a reason to remember a revocation past that
+point, and both stores forget it automatically without a cleanup job.
+`revoke()` is a no-op for an already-expired `expires_at`, for the same
+reason. This mirrors the usage-tracking backends' TTL design (§10) and is
+a deliberate, narrower alternative to `KeyRegistry.revoke` (§8): the
+registry revokes an issuer's *key* (every token that key ever signed,
+including ones not yet issued), while a `RevocationStore` revokes one
+already-issued token by `jti` without affecting any other token from the
+same issuer.
+
+## 10. Distributed Usage Tracking
 
 Constraint enforcement for `max_calls`, `max_amount_usd`, and
 `rate_limit_per_min` (§3.3) requires state keyed by `jti` — meaningless
@@ -274,7 +315,7 @@ the protocol does not mandate Redis specifically, only that constraint
 enforcement be atomic wherever more than one process can verify tokens
 against the same `jti`.
 
-## 10. Security Considerations
+## 11. Security Considerations
 
 - **300-second ceiling is a protocol invariant, not a default.** A verifier
   MUST reject any token where `exp - iat > 300`, even if that token carries
@@ -290,7 +331,7 @@ against the same `jti`.
   process is exactly right for the two-agent examples in this spec; a
   deployment with multiple verifier processes or machines enforcing the
   same constraints against the same `jti` should use
-  `RedisUsageTracker` (§9) or an equivalent atomic backend instead — the
+  `RedisUsageTracker` (§10) or an equivalent atomic backend instead — the
   short token TTL bounds the damage of accidentally using the in-memory one
   in that setting to a single token's lifetime, but it will still
   under-enforce `max_calls`/`rate_limit_per_min` across processes.
@@ -304,8 +345,12 @@ against the same `jti`.
   via the registry itself (§8), not a "deployment concern" left unsolved:
   `kid` remains a hint for key identification, never a trust root, and a
   verifier's `KeyRegistry` is the actual trust root.
+- **Revoking a single token does not require revoking its issuer's key.**
+  Use a `RevocationStore` (§9) to reject one compromised `jti`; reserve
+  `KeyRegistry.revoke` (§8) for when the issuer's signing key itself is
+  compromised, since that invalidates every token it ever signed.
 
-## 11. Versioning
+## 12. Versioning
 
 This is `0.1.0-draft`, the MVP surface. Backwards-incompatible changes to
 the header/claims schema will bump the `typ` value away from `"JCT"` (or

@@ -18,6 +18,16 @@ Today, most multi-agent stacks pass raw API keys or unscoped bearer tokens
 between agents. Read the full threat model and protocol details in
 [SPEC.md](SPEC.md).
 
+SwarmAuth has no opinion about what your agents *do* — a `capability` is
+just a string your policy defines, and `@guard()` wraps any Python callable.
+The examples below use a finance payout because unauthorized money movement
+makes the stakes obvious, but the same call protects any tool an LLM can
+decide to invoke: a support agent issuing a refund, a DevOps agent running
+an infra command, a coding agent merging or deploying, a research agent
+spending against a paid API, a healthcare agent writing to a record, an
+ETL agent triggering a pipeline run — anywhere an autonomous decision meets
+an action with real consequences.
+
 ## Why
 
 - **Prompt injection is not a solved problem, and won't be soon.** SwarmAuth
@@ -43,9 +53,9 @@ between agents. Read the full threat model and protocol details in
 ```python
 import swarmauth
 
-finance_keys = swarmauth.KeyPair.generate()
+tool_keys = swarmauth.KeyPair.generate()
 
-@swarmauth.guard("tool:process_payout", issuer_public_key=finance_keys.public_bytes)
+@swarmauth.guard("tool:process_payout", issuer_public_key=tool_keys.public_bytes)
 def process_payout(destination_account: str, amount_usd: float):
     ...  # your real tool logic — only ever reached with a verified, in-scope token
 ```
@@ -53,8 +63,8 @@ def process_payout(destination_account: str, amount_usd: float):
 Issuing a token that will actually pass that check is one line:
 
 ```python
-token = swarmauth.TokenIssuer(finance_keys).issue(
-    iss="agent:sales-agent-01", sub="tool:process_payout",
+token = swarmauth.TokenIssuer(tool_keys).issue(
+    iss="agent:requester-01", sub="tool:process_payout",
     capabilities=["tool:process_payout"], ttl_seconds=60,
 )
 ```
@@ -79,12 +89,12 @@ hard cutover ([SPEC.md §8](SPEC.md#8-key-registry-and-rotation)):
 from swarmauth.registry import KeyRegistry
 
 registry = KeyRegistry()
-registry.register("agent:sales-agent-01", sales_keys.public_bytes)
-registry.register("agent:finance-agent-01", finance_keys.public_bytes)
+registry.register("agent:issuer-a", keys_a.public_bytes)
+registry.register("agent:issuer-b", keys_b.public_bytes)
 
-# Rotate sales-agent-01's key later without invalidating in-flight tokens:
-registry.register("agent:sales-agent-01", new_sales_keys.public_bytes, rotate=True)
-registry.revoke("agent:sales-agent-01", sales_keys.public_bytes)  # once fully rolled over
+# Rotate issuer-a's key later without invalidating in-flight tokens:
+registry.register("agent:issuer-a", new_keys_a.public_bytes, rotate=True)
+registry.revoke("agent:issuer-a", keys_a.public_bytes)  # once fully rolled over
 
 @swarmauth.guard("tool:process_payout", key_registry=registry)
 def process_payout(destination_account: str, amount_usd: float):
@@ -106,19 +116,42 @@ def process_payout(destination_account: str, amount_usd: float):
     ...
 ```
 
-Both are optional and additive: `issuer_public_key=` and the default
+**`RevocationStore`** — reject one specific, otherwise-valid token before its
+signed expiry, for incident response or agent/session offboarding
+([SPEC.md §9](SPEC.md#9-token-revocation)):
+
+```python
+from swarmauth.revocation import InMemoryRevocationStore
+
+revocation_store = InMemoryRevocationStore()
+
+@swarmauth.guard("tool:process_payout", key_registry=registry, revocation_store=revocation_store)
+def process_payout(destination_account: str, amount_usd: float):
+    ...
+
+# Compromised session detected -- reject its token immediately, without
+# waiting out the rest of its (short) TTL:
+revocation_store.revoke(claims.jti, expires_at=claims.exp)
+```
+
+Use `swarmauth.backends.redis_backend.RedisRevocationStore` in place of
+`InMemoryRevocationStore` to share revocations across multiple verifier
+processes, the same way `RedisUsageTracker` shares usage state.
+
+All three are optional and additive: `issuer_public_key=` and the default
 in-memory `UsageTracker` still work exactly as in the quickstart above.
 
 ## Install
 
 ```bash
-pip install -e .
-# or, without an editable install:
-pip install cryptography pydantic
+pip install swarmauth
 ```
 
-(Not yet published to PyPI — this is the MVP/open-source launch. `pip
-install -e .` from a clone works today.)
+Or from a clone, for local development:
+
+```bash
+pip install -e .
+```
 
 For running the full test suite, including the real-framework adapter tests
 and the Redis backend tests (which run against `fakeredis` by default, no
@@ -133,9 +166,9 @@ pytest
 
 ```mermaid
 sequenceDiagram
-    participant A as Agent A (Sales Agent)
+    participant A as Agent A (Requester)
     participant I as SwarmAuth Token Issuer
-    participant B as Agent B / Tool (Finance Agent)
+    participant B as Agent B / Tool (Capability Owner)
 
     A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=300s)
     I->>I: Evaluate policy — is A allowed to request these capabilities against B?
@@ -156,12 +189,20 @@ algorithm are in [SPEC.md](SPEC.md).
 ## SwarmBench: does this actually stop anything?
 
 [`benchmarks/swarmbench.py`](benchmarks/swarmbench.py) runs a runnable
-simulation of a Sales Agent that delegates to a Finance Agent's
-`process_payout` tool, with a prompt injection embedded in inbound customer
-email instructing the Sales Agent to trigger a $50,000 payout to an
-attacker-controlled account. The injection is modeled as **succeeding** at
+simulation of a Requesting Agent that delegates to a Payments Tool's
+`process_payout` tool, with a prompt injection embedded in an inbound
+customer message instructing the Requesting Agent to trigger a $50,000
+payout to an attacker-controlled account. The injection is modeled as **succeeding** at
 the LLM layer in both test cases — SwarmBench isn't testing whether models
 can be fooled (they can); it's testing what happens next.
+
+This particular scenario is a payout because a wrongly-executed `$50,000`
+transfer is a visceral, easy-to-grade failure — the mechanism it exercises
+(capability check + constraint check at the execution boundary, before any
+side effect happens) is identical regardless of what the tool does. Swap
+`process_payout` for `issue_refund`, `run_shell_command`, `merge_pull_request`,
+`send_email`, or `write_patient_record` and the boundary behaves the same
+way, because `@guard()` never inspects what the wrapped function does.
 
 ```bash
 python benchmarks/swarmbench.py
@@ -178,9 +219,9 @@ python benchmarks/swarmbench.py
 |---|---|
 | Mean token verification overhead | **0.12 ms/op** (target: <1ms) |
 
-In the unprotected loop, the Finance Agent's tool trusts whatever arguments
+In the unprotected loop, the Payments Tool trusts whatever arguments
 it's called with — the injection walks straight through. In the protected
-loop, the token the Sales Agent actually holds only grants
+loop, the token the Requesting Agent actually holds only grants
 `tool:draft_payout` under a policy-set budget; it does not, and cannot,
 grant `tool:process_payout` no matter what the compromised LLM decided to
 call — so the execution boundary rejects it before the ledger is touched.
@@ -193,15 +234,19 @@ swarmauth/
 ├── README.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
+├── tox.ini                          # reproduce every CI job locally: tox -e lint / py312 / frameworks / redis-live
 ├── .github/workflows/ci.yml        # tests + benchmark + live-Redis job on every push/PR
+├── scripts/
+│   └── audit_deps.py                # pip-audit wrapper used by CI's `lint` job and `tox -e lint`
 ├── swarmauth/
 │   ├── __init__.py
 │   ├── crypto.py                   # Ed25519 keypairs, signing, verification
 │   ├── token.py                     # CapabilityToken: issue / parse / verify
 │   ├── registry.py                   # KeyRegistry: multi-issuer trust + key rotation
 │   ├── middleware.py                  # guard decorator + framework adapters
+│   ├── revocation.py                   # RevocationStore + InMemoryRevocationStore
 │   ├── backends/
-│   │   └── redis_backend.py            # RedisUsageTracker (optional `redis` extra)
+│   │   └── redis_backend.py            # RedisUsageTracker, RedisRevocationStore (optional `redis` extra)
 │   ├── exceptions.py
 │   └── py.typed
 ├── benchmarks/
@@ -210,6 +255,7 @@ swarmauth/
     ├── test_token.py
     ├── test_middleware.py
     ├── test_registry.py
+    ├── test_revocation.py
     ├── test_redis_backend.py         # runs against fakeredis, or a real server in CI
     └── test_framework_adapters.py    # real LangChain, ag2, and MCP integration tests
 ```
@@ -228,11 +274,13 @@ swarmauth/
 ## Status
 
 MVP / RFC. The token format, claims schema, and verification algorithm are
-considered stable for `0.1.x`. Multi-issuer key rotation (`KeyRegistry`,
-[SPEC.md §8](SPEC.md#8-key-registry-and-rotation)) and distributed usage
-tracking (`RedisUsageTracker`, [SPEC.md §9](SPEC.md#9-distributed-usage-tracking))
-now ship in the SDK; expect the framework adapters to keep evolving as more
-of them get real integration use. Issues and PRs welcome.
+considered stable for `0.x`. Multi-issuer key rotation (`KeyRegistry`,
+[SPEC.md §8](SPEC.md#8-key-registry-and-rotation)), token revocation
+(`RevocationStore`, [SPEC.md §9](SPEC.md#9-token-revocation)), and
+distributed usage tracking (`RedisUsageTracker`,
+[SPEC.md §10](SPEC.md#10-distributed-usage-tracking)) now ship in the SDK;
+expect the framework adapters to keep evolving as more of them get real
+integration use. Issues and PRs welcome.
 
 ## License
 

@@ -5,6 +5,41 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Nothing yet. Add entries here as changes land, under `### Added` /
+`### Changed` / `### Fixed` / `### Security` as appropriate — move this
+section under a new `## [x.y.z] - YYYY-MM-DD` heading only at release time,
+choosing the version number then, not before.
+
+## [0.1.5] - 2026-09-21
+
+### Added
+
+- **Token revocation**: `CapabilityToken.verify`, `verify_and_check`, and
+  `guard()` all accept an optional `revocation_store`, letting a verifier
+  reject a specific, otherwise-valid token before its signed expiry —
+  needed for incident response and agent/session offboarding.
+  `InMemoryRevocationStore` covers a single process; `RedisRevocationStore`
+  (`swarmauth.backends.redis_backend`) shares revocations across every
+  verifier process and expires its keys automatically, so no cleanup job
+  is required.
+- New `TokenRevokedError` exception, raised by `CapabilityToken.verify` when
+  a presented token's `jti` has been revoked.
+
+## [0.1.3] - 2026-09-20
+
+### Fixed
+
+- **Security**: `@guard()` now binds positional and keyword arguments to the
+  protected callable's real signature before evaluating `allowed_params`.
+  Parameter constraints can no longer be bypassed by invoking a tool with
+  positional arguments.
+- **Security**: budget accounting now rejects non-finite (`NaN`, infinity),
+  negative, and non-numeric amounts before they reach either usage tracker.
+  This prevents `NaN` from bypassing a `max_amount_usd` ceiling and poisoning
+  subsequent in-memory accounting.
+
 ## [0.1.2] - 2026-09-19
 
 ### Fixed
@@ -48,6 +83,8 @@ Initial release.
   `secure_autogen_function`, `secure_mcp_tool` — each a thin, dependency-free
   wrapper tested against real LangChain, ag2, and MCP installs.
 
+[0.1.5]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.5
+[0.1.3]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.3
 [0.1.2]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.2
 [0.1.1]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.1
 [0.1.0]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.0

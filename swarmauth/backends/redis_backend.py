@@ -28,6 +28,9 @@ Design notes
 """
 from __future__ import annotations
 
+import math
+import time
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 from swarmauth.exceptions import ConstraintViolationError
@@ -36,6 +39,7 @@ from swarmauth.token import MAX_TTL_SECONDS, CapabilityClaims
 if TYPE_CHECKING:
     import redis as redis_module
 
+_redis: "ModuleType | None"
 try:
     import redis as _redis
 except ImportError:
@@ -70,8 +74,6 @@ class RedisUsageTracker:
         return f"{self._key_prefix}{jti}:calls"
 
     def check_and_record(self, claims: CapabilityClaims, *, amount: float = 0.0) -> None:
-        import time
-
         constraints = claims.constraints
         hash_key = self._hash_key(claims.jti)
         zset_key = self._zset_key(claims.jti)
@@ -82,7 +84,7 @@ class RedisUsageTracker:
         # WATCH or a half-built MULTI on the connection.
         with self._redis.pipeline() as pipe:
             while True:
-                pipe.watch(hash_key, zset_key)
+                pipe.watch(hash_key, zset_key)  # type: ignore[no-untyped-call]  # redis-py's Pipeline.watch itself has no type annotations
                 now = time.time()
 
                 # Reads only, before MULTI: writing to a watched key here
@@ -121,5 +123,31 @@ class RedisUsageTracker:
                 try:
                     pipe.execute()
                     return
-                except _redis.WatchError:
+                except _redis.WatchError:  # type: ignore[union-attr]  # non-None: __init__ already required the 'redis' package
                     continue
+
+
+class RedisRevocationStore:
+    """Redis-backed token revocation shared by every verifier process.
+
+    A revoked token ID is stored only through its signed expiry, so the store
+    remains bounded without a background cleanup job.
+    """
+
+    def __init__(self, client: "redis_module.Redis", *, key_prefix: str = "swarmauth:revoked:") -> None:
+        if _redis is None:
+            raise ImportError("RedisRevocationStore requires the 'redis' package: pip install swarmauth[redis]")
+        self._redis = client
+        self._key_prefix = key_prefix
+
+    def revoke(self, jti: str, *, expires_at: int) -> None:
+        ttl_seconds = math.ceil(expires_at - time.time())
+        if ttl_seconds <= 0:
+            return
+        self._redis.set(self._key(jti), "1", ex=ttl_seconds)
+
+    def is_revoked(self, jti: str) -> bool:
+        return self._redis.exists(self._key(jti)) == 1
+
+    def _key(self, jti: str) -> str:
+        return f"{self._key_prefix}{jti}"

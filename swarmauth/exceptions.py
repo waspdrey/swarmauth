@@ -24,6 +24,10 @@ class TokenNotYetValidError(SwarmAuthError):
     """Raised when a token is presented before its `iat` claim."""
 
 
+class TokenRevokedError(SwarmAuthError):
+    """Raised when a token ID was revoked before its signed expiry."""
+
+
 class AudienceMismatchError(SwarmAuthError):
     """Raised when a token's `sub` claim does not match the agent/tool verifying it."""
 
@@ -40,7 +44,7 @@ class UnknownIssuerError(SwarmAuthError):
 class CapabilityViolationError(SwarmAuthError):
     """Raised when a token does not grant the capability required for the attempted action."""
 
-    def __init__(self, message: str, *, required: Optional[str] = None, granted: Optional[list] = None):
+    def __init__(self, message: str, *, required: Optional[str] = None, granted: Optional[list[str]] = None):
         super().__init__(message)
         self.required = required
         self.granted = granted or []

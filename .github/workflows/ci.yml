@@ -7,6 +7,41 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # [dev,redis] so mypy can resolve swarmauth.backends.redis_backend
+      # against the real redis-py types, not just the TYPE_CHECKING stub name.
+      - name: Install swarmauth (dev + redis)
+        run: pip install -e ".[dev,redis]"
+
+      - name: Ruff (lint)
+        run: ruff check swarmauth tests
+
+      - name: Mypy (strict, library code only)
+        run: mypy swarmauth
+
+      - name: pip-audit (known vulnerabilities in resolved dependencies)
+        run: python scripts/audit_deps.py
+
+      - name: Version sync (pyproject.toml must match swarmauth/__init__.py)
+        run: |
+          python -c "
+          import re, sys, tomllib
+          pyproject_version = tomllib.load(open('pyproject.toml', 'rb'))['project']['version']
+          init_version = re.search(r'__version__ = \"([^\"]+)\"', open('swarmauth/__init__.py').read()).group(1)
+          if pyproject_version != init_version:
+              sys.exit(f'version mismatch: pyproject.toml={pyproject_version!r} swarmauth/__init__.py={init_version!r}')
+          print(f'versions match: {pyproject_version}')
+          "
+
   test:
     runs-on: ubuntu-latest
     strategy:
