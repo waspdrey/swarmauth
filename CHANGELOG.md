@@ -27,8 +27,6 @@ choosing the version number then, not before.
 - New `TokenRevokedError` exception, raised by `CapabilityToken.verify` when
   a presented token's `jti` has been revoked.
 
-## [0.1.3] - 2026-09-20
-
 ### Fixed
 
 - **Security**: `@guard()` now binds positional and keyword arguments to the
@@ -84,7 +82,6 @@ Initial release.
   wrapper tested against real LangChain, ag2, and MCP installs.
 
 [0.1.5]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.5
-[0.1.3]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.3
 [0.1.2]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.2
 [0.1.1]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.1
 [0.1.0]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.0
