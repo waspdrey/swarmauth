@@ -27,8 +27,9 @@ import time
 from dataclasses import dataclass, field
 
 from swarmauth.crypto import KeyPair
-from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
+from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError, PolicyViolationError
 from swarmauth.middleware import TokenIssuer, UsageTracker, verify_and_check
+from swarmauth.policy import Grant, IssuerPolicy
 from swarmauth.token import Constraints
 
 
@@ -113,10 +114,32 @@ def run_protected_scenario() -> dict:
     ledger = Ledger()
     requester_keypair = KeyPair.generate()  # Requesting Agent's identity
 
-    # Policy decided out-of-band (ops config / human-approved), NOT by the LLM:
-    # the Requesting Agent may ask the Payments Tool to *draft* a payout up
-    # to $1,000 -- it is never granted the capability to directly execute one.
-    issuer = TokenIssuer(keypair=requester_keypair)
+    # The signing key and the grant live outside the model. This grant cannot
+    # mint tool:process_payout at all.
+    policy = IssuerPolicy(
+        [
+            Grant(
+                iss="agent:requester-01",
+                sub="tool:process_payout",
+                capabilities=("tool:draft_payout",),
+                max_ttl_seconds=60,
+                max_amount_usd=1000.0,
+                max_calls=1,
+            )
+        ]
+    )
+    issuer = TokenIssuer(requester_keypair, policy=policy)
+    try:
+        issuer.issue(
+            iss="agent:requester-01",
+            sub="tool:process_payout",
+            capabilities=["tool:process_payout"],
+            constraints=Constraints(max_amount_usd=1000.0, max_calls=1),
+            ttl_seconds=60,
+        )
+        policy_refused = False
+    except PolicyViolationError:
+        policy_refused = True
     legitimate_token = issuer.issue(
         iss="agent:requester-01",
         sub="tool:process_payout",
@@ -155,6 +178,7 @@ def run_protected_scenario() -> dict:
         "injection_succeeded_at_llm_layer": True,
         "unauthorized_payout_executed": len(ledger.payouts) == 1,
         "blocked_at_execution_boundary": blocked,
+        "policy_refused_to_mint_process_payout": policy_refused,
         "error": f"{type(error).__name__}: {error}" if error else None,
         "ledger": ledger.payouts,
     }
@@ -223,6 +247,7 @@ def main() -> None:
     assert a["unauthorized_payout_executed"] is True, "Test Case A should demonstrate the vulnerability"
     assert b["unauthorized_payout_executed"] is False, "Test Case B should demonstrate the block"
     assert b["blocked_at_execution_boundary"] is True
+    assert b["policy_refused_to_mint_process_payout"] is True
 
 
 if __name__ == "__main__":

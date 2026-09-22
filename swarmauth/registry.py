@@ -26,6 +26,7 @@ class KeyRegistry:
 
     def __init__(self) -> None:
         self._keys: dict[str, list[bytes]] = {}
+        self._holders: dict[str, list[bytes]] = {}
         self._lock = threading.Lock()
 
     def register(self, iss: str, public_key: bytes, *, rotate: bool = False) -> None:
@@ -57,9 +58,30 @@ class KeyRegistry:
                 self._keys.pop(iss, None)
 
     def revoke_issuer(self, iss: str) -> None:
-        """Stop trusting every key for `iss` (e.g. the agent itself is decommissioned)."""
+        """Stop trusting every root and holder key for `iss`."""
         with self._lock:
             self._keys.pop(iss, None)
+            self._holders.pop(iss, None)
+
+    def register_holder(self, iss: str, public_key: bytes) -> None:
+        """Trust `public_key` to sign one attenuated child for `iss`.
+
+        Holder keys are not roots of trust. A token with no `prf` is never
+        accepted under a holder key, so a worker who can narrow a grant
+        cannot mint a fresh grant of their own.
+        """
+        with self._lock:
+            existing = [key for key in self._holders.get(iss, []) if key != public_key]
+            self._holders[iss] = [public_key, *existing]
+
+    def revoke_holder(self, iss: str, public_key: bytes) -> None:
+        """Stop trusting `public_key` as a delegation holder for `iss`."""
+        with self._lock:
+            remaining = [key for key in self._holders.get(iss, []) if key != public_key]
+            if remaining:
+                self._holders[iss] = remaining
+            else:
+                self._holders.pop(iss, None)
 
     def keys_for(self, iss: str) -> list[bytes]:
         """Return the trusted public key(s) for `iss`, newest first.
@@ -72,6 +94,18 @@ class KeyRegistry:
             keys = self._keys.get(iss)
         if not keys:
             raise UnknownIssuerError(f"No trusted key registered for issuer '{iss}'")
+        return list(keys)
+
+    def holder_keys_for(self, iss: str) -> list[bytes]:
+        """Return holder keys for `iss`.
+
+        Raises UnknownIssuerError when this verifier has no holder key for
+        `iss`. That is a registration gap, not a bad signature.
+        """
+        with self._lock:
+            keys = self._holders.get(iss)
+        if not keys:
+            raise UnknownIssuerError(f"No holder key registered for delegate '{iss}'")
         return list(keys)
 
     def is_known(self, iss: str) -> bool:

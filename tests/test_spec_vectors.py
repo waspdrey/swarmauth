@@ -20,6 +20,7 @@ from swarmauth.exceptions import (
     AudienceMismatchError,
     CapabilityViolationError,
     ConstraintViolationError,
+    DelegationError,
     InvalidSignatureError,
     MalformedTokenError,
     TokenExpiredError,
@@ -27,7 +28,8 @@ from swarmauth.exceptions import (
     TokenRevokedError,
     UnknownIssuerError,
 )
-from swarmauth.token import ALG, TOKEN_TYPE, CapabilityClaims, CapabilityToken, _canonical_json
+from swarmauth.registry import KeyRegistry
+from swarmauth.token import ALG, TOKEN_TYPE, CapabilityClaims, CapabilityToken, _canonical_json, claims_wire_dict
 
 VECTORS_PATH = Path(__file__).resolve().parent.parent / "spec" / "test-vectors" / "vectors.json"
 VECTORS_DATA = json.loads(VECTORS_PATH.read_text(encoding="utf-8"))
@@ -42,6 +44,7 @@ ERROR_CODE_TO_EXCEPTION = {
     "AUDIENCE_MISMATCH": AudienceMismatchError,
     "CAPABILITY_VIOLATION": CapabilityViolationError,
     "CONSTRAINT_VIOLATION": ConstraintViolationError,
+    "DELEGATION_VIOLATION": DelegationError,
 }
 
 
@@ -74,14 +77,24 @@ def test_vector(vector, issuer_keypair, monkeypatch):
         monkeypatch.setattr("swarmauth.token.time.time", lambda: vector["claims"]["iat"] + 10)
 
     if vector["valid"]:
-        claims = CapabilityToken.verify(token, issuer_public_key=issuer_keypair.public_bytes)
+        claims = CapabilityToken.verify(token, **_trust(vector, issuer_keypair))
         assert claims.iss == vector["claims"]["iss"]
         assert claims.jti == vector["claims"]["jti"]
         assert claims.capabilities == vector["claims"]["capabilities"]
     else:
         expected_exc = ERROR_CODE_TO_EXCEPTION[vector["error_code"]]
-        with pytest.raises(expected_exc):
-            CapabilityToken.verify(token, issuer_public_key=issuer_keypair.public_bytes)
+        with pytest.raises(expected_exc) as caught:
+            CapabilityToken.verify(token, **_trust(vector, issuer_keypair))
+        assert caught.value.code == vector["error_code"]
+
+
+def _trust(vector: dict, issuer_keypair: KeyPair) -> dict:
+    if "delegate_public_key_hex" not in vector:
+        return {"issuer_public_key": issuer_keypair.public_bytes}
+    registry = KeyRegistry()
+    registry.register(vector["root_iss"], issuer_keypair.public_bytes)
+    registry.register_holder(vector["delegate_iss"], bytes.fromhex(vector["delegate_public_key_hex"]))
+    return {"key_registry": registry}
 
 
 def _build_token_with_exact_claims(keypair: KeyPair, *, iat: int, exp: int, jti: str) -> str:
@@ -94,7 +107,7 @@ def _build_token_with_exact_claims(keypair: KeyPair, *, iat: int, exp: int, jti:
     )
     header = {"alg": ALG, "typ": TOKEN_TYPE, "kid": keypair.public_key_id}
     header_b64 = b64url_encode(_canonical_json(header))
-    payload_b64 = b64url_encode(_canonical_json(claims.model_dump(mode="json")))
+    payload_b64 = b64url_encode(_canonical_json(claims_wire_dict(claims)))
     signature = keypair.sign(f"{header_b64}.{payload_b64}".encode("ascii"))
     return f"{header_b64}.{payload_b64}.{b64url_encode(signature)}"
 

@@ -7,21 +7,48 @@ around it.
 """
 from __future__ import annotations
 
+import contextvars
 import functools
 import inspect
 import math
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, TypeVar
+from typing import Any, Callable, Iterator, Optional, TypeVar
 
 from swarmauth.crypto import KeyPair
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
+from swarmauth.policy import IssuerPolicy
 from swarmauth.registry import KeyRegistry
 from swarmauth.revocation import RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability, check_params
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+# Kept past `exp` so a call accepted on the default 2-second leeway boundary
+# still sees the same usage record. Entries are then eligible for collection.
+_USAGE_RETENTION_AFTER_EXP_SECONDS = 3
+
+_current_token: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("swarmauth_token", default=None)
+
+
+@contextmanager
+def use_token(token: str) -> Iterator[None]:
+    """Attach `token` to the current context for guarded tool calls.
+
+    Agent frameworks invoke a tool with the model's arguments and nothing
+    else. The runtime — the code around the model, which the model does not
+    control — enters this context with the token it was actually issued.
+    `guard` reads it when the call has no token keyword argument.
+    """
+    if not isinstance(token, str) or not token:
+        raise ValueError("token must be a non-empty string")
+    reset = _current_token.set(token)
+    try:
+        yield
+    finally:
+        _current_token.reset(reset)
 
 
 def _validated_amount(amount: Any) -> float:
@@ -66,10 +93,15 @@ def _bound_call_params(signature: inspect.Signature, args: tuple[Any, ...], kwar
 
 
 class TokenIssuer:
-    """Convenience wrapper around CapabilityToken.issue bound to one keypair."""
+    """Signs tokens with one keypair, optionally refusing anything outside a policy.
 
-    def __init__(self, keypair: KeyPair):
+    Pass `policy` in any process that holds the private key. Without it, this
+    object will sign whatever it is asked to sign.
+    """
+
+    def __init__(self, keypair: KeyPair, policy: Optional[IssuerPolicy] = None):
         self.keypair = keypair
+        self.policy = policy
 
     def issue(
         self,
@@ -79,13 +111,55 @@ class TokenIssuer:
         capabilities: list[str],
         constraints: Optional[Constraints] = None,
         ttl_seconds: int = 60,
+        dlg: Optional[str] = None,
     ) -> str:
+        resolved = constraints or Constraints()
+        if self.policy is not None:
+            self.policy.check(
+                iss=iss,
+                sub=sub,
+                capabilities=capabilities,
+                constraints=resolved,
+                ttl_seconds=ttl_seconds,
+                dlg=dlg,
+            )
         return CapabilityToken.issue(
             issuer_keypair=self.keypair,
             iss=iss,
             sub=sub,
             capabilities=capabilities,
-            constraints=constraints,
+            constraints=resolved,
+            ttl_seconds=ttl_seconds,
+            dlg=dlg,
+        )
+
+    def attenuate(
+        self,
+        parent: str,
+        *,
+        iss: str,
+        capabilities: list[str],
+        constraints: Optional[Constraints] = None,
+        ttl_seconds: int = 60,
+    ) -> str:
+        """Mint one narrower child of `parent` with this issuer's key."""
+        resolved = constraints or Constraints()
+        _header, parent_claims, _signing_input = CapabilityToken.parse(parent)
+        if self.policy is not None:
+            self.policy.check(
+                iss=iss,
+                sub=parent_claims.sub,
+                capabilities=capabilities,
+                constraints=resolved,
+                ttl_seconds=ttl_seconds,
+                dlg=None,
+            )
+        return CapabilityToken.attenuate(
+            issuer_keypair=self.keypair,
+            parent=parent,
+            iss=iss,
+            capabilities=capabilities,
+            constraints=resolved,
             ttl_seconds=ttl_seconds,
         )
 
@@ -95,6 +169,7 @@ class _TokenUsage:
     call_count: int = 0
     spent_amount: float = 0.0
     call_timestamps: list[float] = field(default_factory=list)
+    expires_at: float = 0.0
 
 
 class UsageTracker:
@@ -113,11 +188,18 @@ class UsageTracker:
     def _get(self, jti: str) -> _TokenUsage:
         return self._usage.setdefault(jti, _TokenUsage())
 
+    def _purge_expired_unlocked(self, now: float) -> None:
+        expired = [jti for jti, usage in self._usage.items() if usage.expires_at <= now]
+        for jti in expired:
+            del self._usage[jti]
+
     def check_and_record(self, claims: CapabilityClaims, *, amount: float = 0.0) -> None:
         with self._lock:
-            usage = self._get(claims.jti)
-            constraints = claims.constraints
             now = time.time()
+            self._purge_expired_unlocked(now)
+            usage = self._get(claims.jti)
+            usage.expires_at = max(usage.expires_at, float(claims.exp) + _USAGE_RETENTION_AFTER_EXP_SECONDS)
+            constraints = claims.constraints
 
             if constraints.max_calls is not None and usage.call_count + 1 > constraints.max_calls:
                 raise ConstraintViolationError(
@@ -184,6 +266,21 @@ def verify_and_check(
     if params is not None:
         check_params(claims, params)
 
+    stateful = [
+        name
+        for name, value in (
+            ("max_calls", claims.constraints.max_calls),
+            ("max_amount_usd", claims.constraints.max_amount_usd),
+            ("rate_limit_per_min", claims.constraints.rate_limit_per_min),
+        )
+        if value is not None
+    ]
+    if stateful and tracker is None:
+        raise ConstraintViolationError(
+            f"Token declares {', '.join(stateful)} but no usage tracker was provided",
+            constraint=stateful[0],
+        )
+
     if tracker is not None:
         tracker.check_and_record(claims, amount=_validated_amount(amount))
 
@@ -209,22 +306,27 @@ def guard(
     `swarmauth.registry.KeyRegistry`). Optionally pass a ``revocation_store``
     to reject a specifically revoked token before execution.
 
-    The wrapped function must be called with the token as a keyword argument
-    (`token_kwarg`, default "token"); it is stripped before the underlying
-    function is invoked. Raises InvalidSignatureError / UnknownIssuerError /
-    TokenExpiredError / CapabilityViolationError / ConstraintViolationError
-    instead of executing the function.
+    The token is read from `token_kwarg` (default "token") when the caller
+    passes it, and otherwise from the `use_token` context. It is stripped
+    before the underlying function is invoked. `audience` defaults to
+    `capability`, so a token for a different tool is rejected. Pass `audience`
+    explicitly when the tool id and the capability string differ.
+
+    Raises InvalidSignatureError / UnknownIssuerError / TokenExpiredError /
+    CapabilityViolationError / ConstraintViolationError /
+    AudienceMismatchError instead of executing the function.
     """
+    bound_audience = capability if audience is None else audience
 
     def decorator(func: F) -> F:
         signature = inspect.signature(func)
 
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            token = kwargs.pop(token_kwarg, None)
+            token = kwargs.pop(token_kwarg, None) or _current_token.get()
             if not token:
                 raise CapabilityViolationError(
-                    f"No JCT supplied (expected kwarg '{token_kwarg}')", required=capability
+                    f"No JCT supplied (expected kwarg '{token_kwarg}' or use_token())", required=capability
                 )
 
             params = _bound_call_params(signature, args, kwargs)
@@ -234,7 +336,7 @@ def guard(
                 issuer_public_key=issuer_public_key,
                 key_registry=key_registry,
                 revocation_store=revocation_store,
-                audience=audience,
+                audience=bound_audience,
                 required_capability=capability,
                 amount=amount,
                 params=params,

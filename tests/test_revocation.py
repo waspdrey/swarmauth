@@ -33,6 +33,16 @@ def test_in_memory_store_forgets_a_revocation_once_its_expiry_passes():
     assert store.is_revoked("jti-1") is False
 
 
+def test_in_memory_store_purges_every_expired_entry(monkeypatch):
+    store = InMemoryRevocationStore()
+    store.revoke("jti-1", expires_at=int(time.time()) + 30)
+    store.revoke("jti-2", expires_at=int(time.time()) + 30)
+    later = time.time() + 60
+    monkeypatch.setattr("swarmauth.revocation.time.time", lambda: later)
+    assert store.is_revoked("jti-1") is False
+    assert store._revoked == {}
+
+
 def test_verify_rejects_a_revoked_token():
     kp = KeyPair.generate()
     token = CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"])

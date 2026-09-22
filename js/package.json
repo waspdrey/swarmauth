@@ -1,0 +1,34 @@
+{
+  "name": "swarmauth",
+  "version": "0.1.7",
+  "description": "OAuth 2.1 for autonomous AI agent swarms: signed, short-lived, capability-scoped delegation tokens.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/waspdrey/swarmauth.git",
+    "directory": "js"
+  },
+  "keywords": [
+    "ai-agents",
+    "security",
+    "authorization",
+    "multi-agent",
+    "ed25519"
+  ],
+  "homepage": "https://github.com/waspdrey/swarmauth"
+}

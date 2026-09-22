@@ -1,8 +1,8 @@
 import pytest
 
 from swarmauth.crypto import KeyPair
-from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
-from swarmauth.middleware import TokenIssuer, UsageTracker, guard, secure_tool_call, verify_and_check
+from swarmauth.exceptions import AudienceMismatchError, CapabilityViolationError, ConstraintViolationError
+from swarmauth.middleware import TokenIssuer, UsageTracker, _TokenUsage, guard, secure_tool_call, use_token, verify_and_check
 from swarmauth.token import Constraints
 
 
@@ -212,3 +212,50 @@ def test_secure_tool_call_forwards_amount_kwarg_to_budget_tracking():
     assert guarded(destination_account="acct_1", amount_usd=60.0, token=token) == "executed"
     with pytest.raises(ConstraintViolationError):
         guarded(destination_account="acct_1", amount_usd=60.0, token=token)
+
+
+def test_stateful_constraint_without_tracker_fails_closed():
+    kp = KeyPair.generate()
+    issuer = TokenIssuer(kp)
+    token = issuer.issue(iss="a", sub="tool:b", capabilities=["tool:b"], constraints=Constraints(max_calls=1))
+    with pytest.raises(ConstraintViolationError, match="usage tracker"):
+        verify_and_check(token, issuer_public_key=kp.public_bytes, required_capability="tool:b")
+
+
+def test_guard_defaults_audience_to_the_capability():
+    kp = KeyPair.generate()
+    issuer = TokenIssuer(kp)
+    token = issuer.issue(iss="a", sub="tool:other", capabilities=["tool:process_payout"])
+
+    @guard("tool:process_payout", issuer_public_key=kp.public_bytes)
+    def process_payout(destination_account, amount_usd):
+        return "executed"
+
+    with pytest.raises(AudienceMismatchError):
+        process_payout(destination_account="acct_1", amount_usd=10.0, token=token)
+
+
+def test_guard_reads_token_from_use_token_context():
+    kp = KeyPair.generate()
+    issuer = TokenIssuer(kp)
+    token = issuer.issue(iss="a", sub="tool:process_payout", capabilities=["tool:process_payout"])
+
+    @guard("tool:process_payout", issuer_public_key=kp.public_bytes)
+    def process_payout(destination_account, amount_usd):
+        return "executed"
+
+    with use_token(token):
+        assert process_payout(destination_account="acct_1", amount_usd=10.0) == "executed"
+    with pytest.raises(CapabilityViolationError):
+        process_payout(destination_account="acct_1", amount_usd=10.0)
+
+
+def test_usage_tracker_drops_expired_entries():
+    kp = KeyPair.generate()
+    issuer = TokenIssuer(kp)
+    token = issuer.issue(iss="a", sub="tool:b", capabilities=["tool:b"], constraints=Constraints(max_calls=2))
+    tracker = UsageTracker()
+    tracker._usage["stale"] = _TokenUsage(expires_at=0)
+    verify_and_check(token, issuer_public_key=kp.public_bytes, required_capability="tool:b", tracker=tracker)
+    assert "stale" not in tracker._usage
+    assert tracker._usage

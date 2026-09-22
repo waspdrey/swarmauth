@@ -7,7 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-09-22
+
 ### Added
+
+- **Issuer policy.** `IssuerPolicy` / `Grant` tell `TokenIssuer` which agent
+  may mint which capability, for which audience, under which ceilings, and
+  which delegate ids `dlg` may name. A request outside the grant raises
+  `PolicyViolationError` and is not signed.
+- **Runtime token attachment.** `use_token` puts the JCT in a context var
+  that `@guard` reads when the caller did not pass `token=`. That is how a
+  framework `invoke` supplies a token the model never sees.
+- **One-hop attenuation.** A parent token with `dlg` cannot be presented to
+  a tool. The named holder, registered with `KeyRegistry.register_holder`,
+  mints one narrower child. Holder keys are not root issuers. See SPEC.md §12.
+- **JavaScript SDK** in `js/`, checked against `spec/test-vectors` on every
+  CI run. npm publish is `.github/workflows/npm.yml` (requires the
+  `NPM_TOKEN` secret).
+- **Execution-boundary example** at `examples/execution_boundary.py`.
+
+### Changed
+
+- Issuers reject `ttl_seconds` above 300 instead of silently clamping it.
+- `@guard` binds `audience` to the capability string when `audience` is omitted.
+- Verification checks `kid` against the one trusted key that must verify the
+  signature. A different trusted key is not tried.
+- A token that declares `max_calls`, `max_amount_usd`, or `rate_limit_per_min`
+  is rejected when no usage tracker is provided.
+- In-memory usage and revocation stores drop entries after they expire.
+- The JavaScript package README documents install, issuance, `guard` /
+  `useToken`, and one-hop attenuation.
+
+### Security
+
+- The checks above close the gaps where a token's `kid`, audience, or
+  stateful limits could be ignored, and where a worker key registered for
+  delegation could mint a fresh root token.
 
 - **Cross-language test vectors**: `spec/test-vectors/vectors.json` gives
   byte-exact signed tokens and expected outcomes (including temporal/expiry
@@ -110,6 +145,7 @@ Initial release.
   `secure_autogen_function`, `secure_mcp_tool` — each a thin, dependency-free
   wrapper tested against real LangChain, ag2, and MCP installs.
 
+[0.1.7]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.7
 [0.1.6]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.6
 [0.1.5]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.5
 [0.1.2]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.2

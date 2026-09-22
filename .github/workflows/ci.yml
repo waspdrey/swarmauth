@@ -63,6 +63,9 @@ jobs:
       - name: Run test suite
         run: pytest -v
 
+      - name: Run execution-boundary example
+        run: python examples/execution_boundary.py
+
       - name: Run SwarmBench (smoke test)
         run: python benchmarks/swarmbench.py
 
@@ -138,3 +141,17 @@ jobs:
         env:
           SWARMAUTH_TEST_REDIS_URL: redis://localhost:6379/0
         run: pytest -v tests/test_redis_backend.py
+
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Test the JavaScript SDK against spec/test-vectors
+        working-directory: js
+        run: npm test

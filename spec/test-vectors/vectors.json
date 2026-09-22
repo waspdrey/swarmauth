@@ -127,6 +127,130 @@
       "description": "Only 2 dot-separated segments instead of 3.",
       "error_code": "MALFORMED_TOKEN",
       "token": "not-a-valid-token.missing-the-third-segment"
+    },
+    {
+      "name": "kid_does_not_match_signing_key",
+      "valid": false,
+      "description": "Signed by the trusted issuer key, but header.kid is a different public key. Verifiers must check kid against the key that verifies, not ignore it.",
+      "error_code": "INVALID_SIGNATURE",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "max_calls": null,
+          "max_amount_usd": null,
+          "rate_limit_per_min": null,
+          "allowed_params": {}
+        },
+        "iat": 1700000000,
+        "exp": 1700000060,
+        "jti": "vector-kid-mismatch-0005"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IktheTY0VUc4eXZDeUxocVUwMDBMeHpZZVVtMExfaExJbDVTOGt5S1diZGMiLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDA2MCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3Ita2lkLW1pc21hdGNoLTAwMDUiLCJzdWIiOiJ0b29sOnByb2Nlc3NfcGF5b3V0In0",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IktheTY0VUc4eXZDeUxocVUwMDBMeHpZZVVtMExfaExJbDVTOGt5S1diZGMiLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDA2MCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3Ita2lkLW1pc21hdGNoLTAwMDUiLCJzdWIiOiJ0b29sOnByb2Nlc3NfcGF5b3V0In0.3teD1BH3fdFE6UcMWb7ogNXyEKIjGNBjuSonK80MlkMbl-ekRX9t5QjF1UOBMTg1hjuUwaTMjpoI6UWMM3pHBQ"
+    },
+    {
+      "name": "delegable_token_not_directly_usable",
+      "valid": false,
+      "description": "A token with dlg set and no prf is an invitation to attenuate, not a credential a tool may accept.",
+      "error_code": "DELEGATION_VIOLATION",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:*"
+        ],
+        "constraints": {
+          "max_calls": 3,
+          "max_amount_usd": 100.0,
+          "rate_limit_per_min": null,
+          "allowed_params": {}
+        },
+        "iat": 1700000000,
+        "exp": 1700000120,
+        "jti": "vector-delegation-parent-0006",
+        "dlg": "agent:worker-02"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDoqIl0sImNvbnN0cmFpbnRzIjp7ImFsbG93ZWRfcGFyYW1zIjp7fSwibWF4X2Ftb3VudF91c2QiOjEwMC4wLCJtYXhfY2FsbHMiOjMsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImRsZyI6ImFnZW50Ondvcmtlci0wMiIsImV4cCI6MTcwMDAwMDEyMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItZGVsZWdhdGlvbi1wYXJlbnQtMDAwNiIsInN1YiI6InRvb2w6cHJvY2Vzc19wYXlvdXQifQ",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDoqIl0sImNvbnN0cmFpbnRzIjp7ImFsbG93ZWRfcGFyYW1zIjp7fSwibWF4X2Ftb3VudF91c2QiOjEwMC4wLCJtYXhfY2FsbHMiOjMsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImRsZyI6ImFnZW50Ondvcmtlci0wMiIsImV4cCI6MTcwMDAwMDEyMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItZGVsZWdhdGlvbi1wYXJlbnQtMDAwNiIsInN1YiI6InRvb2w6cHJvY2Vzc19wYXlvdXQifQ.nCJHaeQJP2PHdEIupOYXhOWm78MDPaZQV-JPallOcMdLSO5Q2pSHBbmhlgQmsyfBk_uPFo9FqmGYJocr7wgCDA"
+    },
+    {
+      "name": "attenuated_delegation",
+      "valid": true,
+      "description": "One hop. The parent names agent:worker-02 and cannot be used directly. The child narrows tool:* to tool:process_payout and tightens both limits. Verify with a registry: root key for agent:requester-01, holder key for agent:worker-02. Pin the clock to claims.iat + 10. A holder key must not be accepted as a root issuer.",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc"
+      },
+      "claims": {
+        "iss": "agent:worker-02",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "max_calls": 1,
+          "max_amount_usd": 40.0,
+          "rate_limit_per_min": null,
+          "allowed_params": {}
+        },
+        "iat": 1700000000,
+        "exp": 1700000060,
+        "jti": "vector-delegation-child-0007",
+        "prf": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDoqIl0sImNvbnN0cmFpbnRzIjp7ImFsbG93ZWRfcGFyYW1zIjp7fSwibWF4X2Ftb3VudF91c2QiOjEwMC4wLCJtYXhfY2FsbHMiOjMsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImRsZyI6ImFnZW50Ondvcmtlci0wMiIsImV4cCI6MTcwMDAwMDEyMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItZGVsZWdhdGlvbi1wYXJlbnQtMDAwNiIsInN1YiI6InRvb2w6cHJvY2Vzc19wYXlvdXQifQ.nCJHaeQJP2PHdEIupOYXhOWm78MDPaZQV-JPallOcMdLSO5Q2pSHBbmhlgQmsyfBk_uPFo9FqmGYJocr7wgCDA"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IktheTY0VUc4eXZDeUxocVUwMDBMeHpZZVVtMExfaExJbDVTOGt5S1diZGMiLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjo0MC4wLCJtYXhfY2FsbHMiOjEsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDA2MCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDp3b3JrZXItMDIiLCJqdGkiOiJ2ZWN0b3ItZGVsZWdhdGlvbi1jaGlsZC0wMDA3IiwicHJmIjoiZXlKaGJHY2lPaUpGWkVSVFFTSXNJbXRwWkNJNklrRTJSVWgyWDFCUFJVdzBaR05PTUZrMU1IWkJiVmRtYXpGcVEySndVVEZtU0dSNVIxcENTbFpOWW1jaUxDSjBlWEFpT2lKS1ExUWlmUS5leUpqWVhCaFltbHNhWFJwWlhNaU9sc2lkRzl2YkRvcUlsMHNJbU52Ym5OMGNtRnBiblJ6SWpwN0ltRnNiRzkzWldSZmNHRnlZVzF6SWpwN2ZTd2liV0Y0WDJGdGIzVnVkRjkxYzJRaU9qRXdNQzR3TENKdFlYaGZZMkZzYkhNaU9qTXNJbkpoZEdWZmJHbHRhWFJmY0dWeVgyMXBiaUk2Ym5Wc2JIMHNJbVJzWnlJNkltRm5aVzUwT25kdmNtdGxjaTB3TWlJc0ltVjRjQ0k2TVRjd01EQXdNREV5TUN3aWFXRjBJam94TnpBd01EQXdNREF3TENKcGMzTWlPaUpoWjJWdWREcHlaWEYxWlhOMFpYSXRNREVpTENKcWRHa2lPaUoyWldOMGIzSXRaR1ZzWldkaGRHbHZiaTF3WVhKbGJuUXRNREF3TmlJc0luTjFZaUk2SW5SdmIydzZjSEp2WTJWemMxOXdZWGx2ZFhRaWZRLm5DSkhhZVFKUDJQSGRFSXVwT1lYaE9XbTc4TURQYVpRVi1KUGFsbE9jTWRMU081UTJwU0hCYm1obGdRbXN5ZkJrX3VQRm85RnFtR1lKb2NyN3dnQ0RBIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IktheTY0VUc4eXZDeUxocVUwMDBMeHpZZVVtMExfaExJbDVTOGt5S1diZGMiLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6e30sIm1heF9hbW91bnRfdXNkIjo0MC4wLCJtYXhfY2FsbHMiOjEsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImV4cCI6MTcwMDAwMDA2MCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDp3b3JrZXItMDIiLCJqdGkiOiJ2ZWN0b3ItZGVsZWdhdGlvbi1jaGlsZC0wMDA3IiwicHJmIjoiZXlKaGJHY2lPaUpGWkVSVFFTSXNJbXRwWkNJNklrRTJSVWgyWDFCUFJVdzBaR05PTUZrMU1IWkJiVmRtYXpGcVEySndVVEZtU0dSNVIxcENTbFpOWW1jaUxDSjBlWEFpT2lKS1ExUWlmUS5leUpqWVhCaFltbHNhWFJwWlhNaU9sc2lkRzl2YkRvcUlsMHNJbU52Ym5OMGNtRnBiblJ6SWpwN0ltRnNiRzkzWldSZmNHRnlZVzF6SWpwN2ZTd2liV0Y0WDJGdGIzVnVkRjkxYzJRaU9qRXdNQzR3TENKdFlYaGZZMkZzYkhNaU9qTXNJbkpoZEdWZmJHbHRhWFJmY0dWeVgyMXBiaUk2Ym5Wc2JIMHNJbVJzWnlJNkltRm5aVzUwT25kdmNtdGxjaTB3TWlJc0ltVjRjQ0k2TVRjd01EQXdNREV5TUN3aWFXRjBJam94TnpBd01EQXdNREF3TENKcGMzTWlPaUpoWjJWdWREcHlaWEYxWlhOMFpYSXRNREVpTENKcWRHa2lPaUoyWldOMGIzSXRaR1ZzWldkaGRHbHZiaTF3WVhKbGJuUXRNREF3TmlJc0luTjFZaUk2SW5SdmIydzZjSEp2WTJWemMxOXdZWGx2ZFhRaWZRLm5DSkhhZVFKUDJQSGRFSXVwT1lYaE9XbTc4TURQYVpRVi1KUGFsbE9jTWRMU081UTJwU0hCYm1obGdRbXN5ZkJrX3VQRm85RnFtR1lKb2NyN3dnQ0RBIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9.XoTlU4dCH5OoQAZrrUCmFl2f0kMaUDH70dhAc3M96cG41S0BwQzLEuwByBcYHPwWn5NN93tZ3ihXuoXNNW-ZDg",
+      "root_iss": "agent:requester-01",
+      "delegate_iss": "agent:worker-02",
+      "delegate_public_key_hex": "29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7"
+    },
+    {
+      "name": "delegation_capability_widened",
+      "valid": false,
+      "description": "Child capability other:admin is outside the parent grant tool:*. Attenuation must fail.",
+      "error_code": "DELEGATION_VIOLATION",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "Kay64UG8yvCyLhqU000LxzYeUm0L_hLIl5S8kyKWbdc"
+      },
+      "claims": {
+        "iss": "agent:worker-02",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "other:admin"
+        ],
+        "constraints": {
+          "max_calls": 1,
+          "max_amount_usd": 40.0,
+          "rate_limit_per_min": null,
+          "allowed_params": {}
+        },
+        "iat": 1700000000,
+        "exp": 1700000060,
+        "jti": "vector-delegation-widened-0008",
+        "prf": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDoqIl0sImNvbnN0cmFpbnRzIjp7ImFsbG93ZWRfcGFyYW1zIjp7fSwibWF4X2Ftb3VudF91c2QiOjEwMC4wLCJtYXhfY2FsbHMiOjMsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbH0sImRsZyI6ImFnZW50Ondvcmtlci0wMiIsImV4cCI6MTcwMDAwMDEyMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3ItZGVsZWdhdGlvbi1wYXJlbnQtMDAwNiIsInN1YiI6InRvb2w6cHJvY2Vzc19wYXlvdXQifQ.nCJHaeQJP2PHdEIupOYXhOWm78MDPaZQV-JPallOcMdLSO5Q2pSHBbmhlgQmsyfBk_uPFo9FqmGYJocr7wgCDA"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IktheTY0VUc4eXZDeUxocVUwMDBMeHpZZVVtMExfaExJbDVTOGt5S1diZGMiLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsib3RoZXI6YWRtaW4iXSwiY29uc3RyYWludHMiOnsiYWxsb3dlZF9wYXJhbXMiOnt9LCJtYXhfYW1vdW50X3VzZCI6NDAuMCwibWF4X2NhbGxzIjoxLCJyYXRlX2xpbWl0X3Blcl9taW4iOm51bGx9LCJleHAiOjE3MDAwMDAwNjAsImlhdCI6MTcwMDAwMDAwMCwiaXNzIjoiYWdlbnQ6d29ya2VyLTAyIiwianRpIjoidmVjdG9yLWRlbGVnYXRpb24td2lkZW5lZC0wMDA4IiwicHJmIjoiZXlKaGJHY2lPaUpGWkVSVFFTSXNJbXRwWkNJNklrRTJSVWgyWDFCUFJVdzBaR05PTUZrMU1IWkJiVmRtYXpGcVEySndVVEZtU0dSNVIxcENTbFpOWW1jaUxDSjBlWEFpT2lKS1ExUWlmUS5leUpqWVhCaFltbHNhWFJwWlhNaU9sc2lkRzl2YkRvcUlsMHNJbU52Ym5OMGNtRnBiblJ6SWpwN0ltRnNiRzkzWldSZmNHRnlZVzF6SWpwN2ZTd2liV0Y0WDJGdGIzVnVkRjkxYzJRaU9qRXdNQzR3TENKdFlYaGZZMkZzYkhNaU9qTXNJbkpoZEdWZmJHbHRhWFJmY0dWeVgyMXBiaUk2Ym5Wc2JIMHNJbVJzWnlJNkltRm5aVzUwT25kdmNtdGxjaTB3TWlJc0ltVjRjQ0k2TVRjd01EQXdNREV5TUN3aWFXRjBJam94TnpBd01EQXdNREF3TENKcGMzTWlPaUpoWjJWdWREcHlaWEYxWlhOMFpYSXRNREVpTENKcWRHa2lPaUoyWldOMGIzSXRaR1ZzWldkaGRHbHZiaTF3WVhKbGJuUXRNREF3TmlJc0luTjFZaUk2SW5SdmIydzZjSEp2WTJWemMxOXdZWGx2ZFhRaWZRLm5DSkhhZVFKUDJQSGRFSXVwT1lYaE9XbTc4TURQYVpRVi1KUGFsbE9jTWRMU081UTJwU0hCYm1obGdRbXN5ZkJrX3VQRm85RnFtR1lKb2NyN3dnQ0RBIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IktheTY0VUc4eXZDeUxocVUwMDBMeHpZZVVtMExfaExJbDVTOGt5S1diZGMiLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsib3RoZXI6YWRtaW4iXSwiY29uc3RyYWludHMiOnsiYWxsb3dlZF9wYXJhbXMiOnt9LCJtYXhfYW1vdW50X3VzZCI6NDAuMCwibWF4X2NhbGxzIjoxLCJyYXRlX2xpbWl0X3Blcl9taW4iOm51bGx9LCJleHAiOjE3MDAwMDAwNjAsImlhdCI6MTcwMDAwMDAwMCwiaXNzIjoiYWdlbnQ6d29ya2VyLTAyIiwianRpIjoidmVjdG9yLWRlbGVnYXRpb24td2lkZW5lZC0wMDA4IiwicHJmIjoiZXlKaGJHY2lPaUpGWkVSVFFTSXNJbXRwWkNJNklrRTJSVWgyWDFCUFJVdzBaR05PTUZrMU1IWkJiVmRtYXpGcVEySndVVEZtU0dSNVIxcENTbFpOWW1jaUxDSjBlWEFpT2lKS1ExUWlmUS5leUpqWVhCaFltbHNhWFJwWlhNaU9sc2lkRzl2YkRvcUlsMHNJbU52Ym5OMGNtRnBiblJ6SWpwN0ltRnNiRzkzWldSZmNHRnlZVzF6SWpwN2ZTd2liV0Y0WDJGdGIzVnVkRjkxYzJRaU9qRXdNQzR3TENKdFlYaGZZMkZzYkhNaU9qTXNJbkpoZEdWZmJHbHRhWFJmY0dWeVgyMXBiaUk2Ym5Wc2JIMHNJbVJzWnlJNkltRm5aVzUwT25kdmNtdGxjaTB3TWlJc0ltVjRjQ0k2TVRjd01EQXdNREV5TUN3aWFXRjBJam94TnpBd01EQXdNREF3TENKcGMzTWlPaUpoWjJWdWREcHlaWEYxWlhOMFpYSXRNREVpTENKcWRHa2lPaUoyWldOMGIzSXRaR1ZzWldkaGRHbHZiaTF3WVhKbGJuUXRNREF3TmlJc0luTjFZaUk2SW5SdmIydzZjSEp2WTJWemMxOXdZWGx2ZFhRaWZRLm5DSkhhZVFKUDJQSGRFSXVwT1lYaE9XbTc4TURQYVpRVi1KUGFsbE9jTWRMU081UTJwU0hCYm1obGdRbXN5ZkJrX3VQRm85RnFtR1lKb2NyN3dnQ0RBIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9.OXee6awoqpJ8QZ77nUD4l7z7AFXUsV9zm3iZQxcnxj_9MUu2TEB9mrxINIgxgEIuXsppluvDvmgN7dnXka3wAA",
+      "root_iss": "agent:requester-01",
+      "delegate_iss": "agent:worker-02",
+      "delegate_public_key_hex": "29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7"
     }
   ],
   "temporal_test_cases": [

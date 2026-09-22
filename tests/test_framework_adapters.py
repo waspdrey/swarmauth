@@ -80,6 +80,22 @@ def test_langchain_structured_tool_func_executes_with_valid_token():
     assert result == "sent 5.0 to acct_1"
 
 
+def test_langchain_structured_tool_invoke_uses_runtime_token_context():
+    from swarmauth.middleware import use_token
+
+    kp = KeyPair.generate()
+    issuer = TokenIssuer(kp)
+    tool = secure_langchain_tool(
+        _make_payout_structured_tool(), capability="tool:process_payout", issuer_public_key=kp.public_bytes
+    )
+    token = issuer.issue(iss="agent:a", sub="tool:process_payout", capabilities=["tool:process_payout"])
+
+    with use_token(token):
+        assert tool.invoke({"destination_account": "acct_1", "amount_usd": 5.0}) == "sent 5.0 to acct_1"
+    with pytest.raises(CapabilityViolationError):
+        tool.invoke({"destination_account": "ATTACKER-ACCT-9999", "amount_usd": 50000.0})
+
+
 def test_langchain_structured_tool_constraint_blocks_wrong_destination():
     kp = KeyPair.generate()
     issuer = TokenIssuer(kp)
