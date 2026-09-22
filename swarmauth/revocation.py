@@ -34,19 +34,21 @@ class InMemoryRevocationStore:
         self._revoked: dict[str, int] = {}
         self._lock = threading.Lock()
 
+    def _purge_expired_unlocked(self, now: float) -> None:
+        expired = [jti for jti, expires_at in self._revoked.items() if expires_at <= now]
+        for jti in expired:
+            del self._revoked[jti]
+
     def revoke(self, jti: str, *, expires_at: int) -> None:
-        if expires_at <= time.time():
-            return
+        now = time.time()
         with self._lock:
+            self._purge_expired_unlocked(now)
+            if expires_at <= now:
+                return
             self._revoked[jti] = max(expires_at, self._revoked.get(jti, 0))
 
     def is_revoked(self, jti: str) -> bool:
         now = time.time()
         with self._lock:
-            expires_at = self._revoked.get(jti)
-            if expires_at is None:
-                return False
-            if expires_at <= now:
-                del self._revoked[jti]
-                return False
-            return True
+            self._purge_expired_unlocked(now)
+            return jti in self._revoked

@@ -76,9 +76,18 @@ the freshness check with everything else, pin your clock to `claims.iat +
 
 **`temporal_test_cases`** — pure data, no token or key involved. Exercises
 exactly the TTL-ceiling and iat/exp/leeway window logic in SPEC.md §4 steps
-7–9, including the inclusive boundaries (`now == iat - leeway` and `now ==
+7–8, including the inclusive boundaries (`now == iat - leeway` and `now ==
 exp + leeway` are both accepted, not rejected). Test your temporal-check
 logic directly against these, independent of signing.
+
+Vectors whose name starts with `delegation` or `attenuated`, and
+`delegable_token_not_directly_usable`, exercise SPEC.md §12. Pin the clock
+the same way. A vector that includes `delegate_public_key_hex` must be
+verified with a registry: the root public key registered for `root_iss`,
+and that delegate key registered as a **holder** key for `delegate_iss`
+(not as a root issuer). `kid_does_not_match_signing_key` must fail
+`INVALID_SIGNATURE` even though the signature was produced by the trusted
+issuer key.
 
 ## Regenerating
 

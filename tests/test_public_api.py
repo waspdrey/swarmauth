@@ -30,3 +30,21 @@ def test_every_swarmauth_error_is_exported_at_top_level():
 
     missing = [cls.__name__ for cls in error_classes if not hasattr(swarmauth, cls.__name__)]
     assert not missing, f"exception(s) defined in swarmauth.exceptions but not exported from swarmauth: {missing}"
+
+
+def test_exception_codes_match_the_spec():
+    expected = {
+        "MalformedTokenError": "MALFORMED_TOKEN",
+        "InvalidSignatureError": "INVALID_SIGNATURE",
+        "TokenExpiredError": "TOKEN_EXPIRED",
+        "TokenNotYetValidError": "TOKEN_NOT_YET_VALID",
+        "TokenRevokedError": "TOKEN_REVOKED",
+        "AudienceMismatchError": "AUDIENCE_MISMATCH",
+        "UnknownIssuerError": "UNKNOWN_ISSUER",
+        "CapabilityViolationError": "CAPABILITY_VIOLATION",
+        "ConstraintViolationError": "CONSTRAINT_VIOLATION",
+        "PolicyViolationError": "POLICY_VIOLATION",
+        "DelegationError": "DELEGATION_VIOLATION",
+    }
+    for name, code in expected.items():
+        assert getattr(exceptions, name).code == code

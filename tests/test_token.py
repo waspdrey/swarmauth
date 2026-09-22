@@ -22,11 +22,54 @@ def test_issue_and_verify_roundtrip():
     assert claims.capabilities == ["tool:b"]
 
 
-def test_ttl_is_clamped_to_300s():
+def test_ttl_above_300_is_rejected():
     kp = KeyPair.generate()
-    token = CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=99999)
+    with pytest.raises(ValueError, match="300"):
+        CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=301)
+    with pytest.raises(ValueError, match="300"):
+        CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=0)
+    token = CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=300)
     _, claims, _ = CapabilityToken.parse(token)
     assert claims.exp - claims.iat == 300
+
+
+def test_issued_token_omits_absent_delegation_claims():
+    import json
+
+    from swarmauth.crypto import b64url_decode
+
+    kp = KeyPair.generate()
+    token = CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"])
+    payload = json.loads(b64url_decode(token.split(".")[1]))
+    assert "dlg" not in payload
+    assert "prf" not in payload
+
+
+def test_kid_must_be_the_key_that_verifies():
+    from swarmauth.crypto import b64url_encode
+    from swarmauth.registry import KeyRegistry
+    from swarmauth.token import ALG, TOKEN_TYPE, _canonical_json
+
+    signer = KeyPair.generate()
+    other = KeyPair.generate()
+    token = CapabilityToken.issue(issuer_keypair=signer, iss="agent:a", sub="b", capabilities=["x"])
+    _header_b64, payload_b64, _sig_b64 = token.split(".")
+    header = {"alg": ALG, "typ": TOKEN_TYPE, "kid": other.public_key_id}
+    header_b64 = b64url_encode(_canonical_json(header))
+    signing_input = f"{header_b64}.{payload_b64}".encode("ascii")
+    mismatched = f"{header_b64}.{payload_b64}.{b64url_encode(signer.sign(signing_input))}"
+
+    with pytest.raises(InvalidSignatureError):
+        CapabilityToken.verify(mismatched, issuer_public_key=signer.public_bytes)
+
+    registry = KeyRegistry()
+    registry.register("agent:a", signer.public_bytes)
+    registry.register("agent:a", other.public_bytes, rotate=True)
+    with pytest.raises(InvalidSignatureError):
+        CapabilityToken.verify(mismatched, key_registry=registry)
+
+    # The original token, whose kid is the signing key, still verifies while both keys are trusted.
+    assert CapabilityToken.verify(token, key_registry=registry).iss == "agent:a"
 
 
 def test_tampered_signature_rejected():

@@ -55,6 +55,9 @@ def main() -> int:
         # swarmauth/ source directory instead of the installed wheel.
         tests_copy = tmp_path / "tests"
         shutil.copytree(REPO_ROOT / "tests", tests_copy)
+        # test_spec_vectors.py loads spec/test-vectors next to the tests
+        # directory. Copy that tree too; do not run pytest from the repo.
+        shutil.copytree(REPO_ROOT / "spec" / "test-vectors", tmp_path / "spec" / "test-vectors")
 
         subprocess.run([str(python), "-m", "pip", "install", "-q", "--upgrade", "pip"], check=True)
         subprocess.run(

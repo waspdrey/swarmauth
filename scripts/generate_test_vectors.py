@@ -32,8 +32,10 @@ import json
 import time
 from pathlib import Path
 
-from swarmauth.crypto import KeyPair
-from swarmauth.token import ALG, TOKEN_TYPE, CapabilityClaims, CapabilityToken, Constraints, _canonical_json
+from swarmauth.crypto import KeyPair, b64url_encode
+from swarmauth.exceptions import DelegationError, InvalidSignatureError
+from swarmauth.registry import KeyRegistry
+from swarmauth.token import ALG, TOKEN_TYPE, CapabilityClaims, CapabilityToken, Constraints, _canonical_json, claims_wire_dict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OUT_PATH = REPO_ROOT / "spec" / "test-vectors" / "vectors.json"
@@ -45,14 +47,29 @@ ISSUER_PUBLIC_HEX = "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125
 FIXED_IAT = 1_700_000_000  # 2023-11-14T22:13:20Z -- arbitrary but fixed, for byte-exact reproducibility
 
 
+def _verify_at(
+    now: int,
+    token: str,
+    *,
+    issuer_public_key: bytes | None = None,
+    key_registry: KeyRegistry | None = None,
+) -> None:
+    import swarmauth.token as token_mod
+
+    original = token_mod.time.time
+    token_mod.time.time = lambda: now
+    try:
+        CapabilityToken.verify(token, issuer_public_key=issuer_public_key, key_registry=key_registry)
+    finally:
+        token_mod.time.time = original
+
+
 def _build_token(keypair: KeyPair, claims: CapabilityClaims) -> tuple[str, dict, str]:
     """Mirrors CapabilityToken.issue()'s construction exactly, but from an
     already-built CapabilityClaims so iat/exp/jti can be pinned."""
     header = {"alg": ALG, "typ": TOKEN_TYPE, "kid": keypair.public_key_id}
-    from swarmauth.crypto import b64url_encode
-
     header_b64 = b64url_encode(_canonical_json(header))
-    payload_b64 = b64url_encode(_canonical_json(claims.model_dump(mode="json")))
+    payload_b64 = b64url_encode(_canonical_json(claims_wire_dict(claims)))
     signing_input = f"{header_b64}.{payload_b64}"
     signature = keypair.sign(signing_input.encode("ascii"))
     sig_b64 = b64url_encode(signature)
@@ -105,7 +122,7 @@ def main() -> None:
             "math against these values yourself rather than expecting a live "
             "verify() call to accept this token as currently fresh.",
             "header": header,
-            "claims": json.loads(claims.model_dump_json()),
+            "claims": claims_wire_dict(claims),
             "signing_input": signing_input,
             "token": token,
         }
@@ -135,7 +152,7 @@ def main() -> None:
             "description": "Wildcard capability, all four constraint fields populated, exp-iat at the 300s ceiling exactly. "
             "Same freshness caveat as minimal_valid: iat/exp are fixed, not currently fresh.",
             "header": header,
-            "claims": json.loads(claims.model_dump_json()),
+            "claims": claims_wire_dict(claims),
             "signing_input": signing_input,
             "token": token,
         }
@@ -164,7 +181,7 @@ def main() -> None:
             "alone, independent of wall-clock time, so this vector never goes stale.",
             "error_code": "TOKEN_EXPIRED",
             "header": header,
-            "claims": json.loads(claims.model_dump_json()),
+            "claims": claims_wire_dict(claims),
             "signing_input": signing_input,
             "token": token,
         }
@@ -195,7 +212,7 @@ def main() -> None:
             "description": "Valid header/payload, signature's first base64url character flipped.",
             "error_code": "INVALID_SIGNATURE",
             "header": header,
-            "claims": json.loads(claims.model_dump_json()),
+            "claims": claims_wire_dict(claims),
             "signing_input": signing_input,
             "token": tampered_token,
         }
@@ -209,6 +226,141 @@ def main() -> None:
             "description": "Only 2 dot-separated segments instead of 3.",
             "error_code": "MALFORMED_TOKEN",
             "token": "not-a-valid-token.missing-the-third-segment",
+        }
+    )
+
+    delegate = KeyPair.from_private_bytes(bytes(range(32, 64)))
+    delegate_iss = "agent:worker-02"
+    root_iss = "agent:requester-01"
+
+    # -- invalid: kid does not match the key that produced the signature -----
+    claims = CapabilityClaims(
+        iss=root_iss,
+        sub="tool:process_payout",
+        capabilities=["tool:process_payout"],
+        iat=FIXED_IAT,
+        exp=FIXED_IAT + 60,
+        jti="vector-kid-mismatch-0005",
+    )
+    payload_b64 = b64url_encode(_canonical_json(claims_wire_dict(claims)))
+    header = {"alg": ALG, "typ": TOKEN_TYPE, "kid": delegate.public_key_id}
+    header_b64 = b64url_encode(_canonical_json(header))
+    signing_input = f"{header_b64}.{payload_b64}"
+    kid_mismatch = f"{header_b64}.{payload_b64}.{b64url_encode(keypair.sign(signing_input.encode('ascii')))}"
+    try:
+        CapabilityToken.verify(kid_mismatch, issuer_public_key=keypair.public_bytes)
+        raise AssertionError("expected kid mismatch to fail verification")
+    except InvalidSignatureError as exc:
+        assert exc.code == "INVALID_SIGNATURE"
+    vectors.append(
+        {
+            "name": "kid_does_not_match_signing_key",
+            "valid": False,
+            "description": "Signed by the trusted issuer key, but header.kid is a different public key. "
+            "Verifiers must check kid against the key that verifies, not ignore it.",
+            "error_code": "INVALID_SIGNATURE",
+            "header": header,
+            "claims": claims_wire_dict(claims),
+            "signing_input": signing_input,
+            "token": kid_mismatch,
+        }
+    )
+
+    # -- invalid: delegable token presented directly --------------------------
+    parent_claims = CapabilityClaims(
+        iss=root_iss,
+        sub="tool:process_payout",
+        capabilities=["tool:*"],
+        constraints=Constraints(max_calls=3, max_amount_usd=100.0),
+        iat=FIXED_IAT,
+        exp=FIXED_IAT + 120,
+        jti="vector-delegation-parent-0006",
+        dlg=delegate_iss,
+    )
+    parent_token, parent_header, parent_signing_input = _build_token(keypair, parent_claims)
+    try:
+        _verify_at(FIXED_IAT + 10, parent_token, issuer_public_key=keypair.public_bytes)
+        raise AssertionError("expected a delegable token to be rejected as an execution credential")
+    except DelegationError as exc:
+        assert exc.code == "DELEGATION_VIOLATION"
+    vectors.append(
+        {
+            "name": "delegable_token_not_directly_usable",
+            "valid": False,
+            "description": "A token with dlg set and no prf is an invitation to attenuate, not a credential a tool may accept.",
+            "error_code": "DELEGATION_VIOLATION",
+            "header": parent_header,
+            "claims": claims_wire_dict(parent_claims),
+            "signing_input": parent_signing_input,
+            "token": parent_token,
+        }
+    )
+
+    # -- valid: one-hop attenuation -------------------------------------------
+    child_claims = CapabilityClaims(
+        iss=delegate_iss,
+        sub="tool:process_payout",
+        capabilities=["tool:process_payout"],
+        constraints=Constraints(max_calls=1, max_amount_usd=40.0),
+        iat=FIXED_IAT,
+        exp=FIXED_IAT + 60,
+        jti="vector-delegation-child-0007",
+        prf=parent_token,
+    )
+    child_token, child_header, child_signing_input = _build_token(delegate, child_claims)
+    _self_check_wire_format(delegate, child_token)
+    registry = KeyRegistry()
+    registry.register(root_iss, keypair.public_bytes)
+    registry.register_holder(delegate_iss, delegate.public_bytes)
+    _verify_at(FIXED_IAT + 10, child_token, key_registry=registry)
+    vectors.append(
+        {
+            "name": "attenuated_delegation",
+            "valid": True,
+            "description": "One hop. The parent names agent:worker-02 and cannot be used directly. "
+            "The child narrows tool:* to tool:process_payout and tightens both limits. "
+            "Verify with a registry: root key for agent:requester-01, holder key for agent:worker-02. "
+            "Pin the clock to claims.iat + 10. A holder key must not be accepted as a root issuer.",
+            "header": child_header,
+            "claims": claims_wire_dict(child_claims),
+            "signing_input": child_signing_input,
+            "token": child_token,
+            "root_iss": root_iss,
+            "delegate_iss": delegate_iss,
+            "delegate_public_key_hex": delegate.public_bytes.hex(),
+        }
+    )
+
+    # -- invalid: child widens a capability -----------------------------------
+    widened_claims = CapabilityClaims(
+        iss=delegate_iss,
+        sub="tool:process_payout",
+        capabilities=["other:admin"],
+        constraints=Constraints(max_calls=1, max_amount_usd=40.0),
+        iat=FIXED_IAT,
+        exp=FIXED_IAT + 60,
+        jti="vector-delegation-widened-0008",
+        prf=parent_token,
+    )
+    widened_token, widened_header, widened_signing_input = _build_token(delegate, widened_claims)
+    try:
+        _verify_at(FIXED_IAT + 10, widened_token, key_registry=registry)
+        raise AssertionError("expected a widened delegation to fail")
+    except DelegationError as exc:
+        assert exc.code == "DELEGATION_VIOLATION"
+    vectors.append(
+        {
+            "name": "delegation_capability_widened",
+            "valid": False,
+            "description": "Child capability other:admin is outside the parent grant tool:*. Attenuation must fail.",
+            "error_code": "DELEGATION_VIOLATION",
+            "header": widened_header,
+            "claims": claims_wire_dict(widened_claims),
+            "signing_input": widened_signing_input,
+            "token": widened_token,
+            "root_iss": root_iss,
+            "delegate_iss": delegate_iss,
+            "delegate_public_key_hex": delegate.public_bytes.hex(),
         }
     )
 

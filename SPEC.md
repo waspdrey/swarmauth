@@ -6,7 +6,7 @@
 This is the *protocol's* version, separate from the Python SDK's package
 version (`swarmauth` on PyPI, currently newer than this number) -- it only
 advances on a backwards-incompatible change to the wire format itself (see
-§12). The SDK has shipped several releases (new capabilities, bug fixes,
+§13). The SDK has shipped several releases (new capabilities, bug fixes,
 CI tooling) without changing the token format or verification algorithm,
 so the protocol version correctly hasn't moved; a mismatch here is
 expected, not stale documentation.
@@ -101,8 +101,10 @@ base64url(header) . base64url(payload) . base64url(signature)
 | `capabilities` | string[] | yes, non-empty | Capabilities granted. Exact match (`"tool:read_invoice"`) or a `prefix:*` wildcard (`"tool:*"`). |
 | `constraints` | object | no (defaults empty) | See §3.3. |
 | `iat` | integer | yes | Issued-at, Unix seconds. |
-| `exp` | integer | yes | Expiry, Unix seconds. **`exp - iat` MUST be ≤ 300.** Verifiers reject tokens that violate this even if the signature is valid, to prevent an issuer bug or a compromised issuer from minting long-lived tokens. |
+| `exp` | integer | yes | Expiry, Unix seconds. **`exp - iat` MUST be ≤ 300.** Verifiers reject tokens that violate this even if the signature is valid. Issuers MUST reject a requested lifetime above 300 seconds; they MUST NOT silently shorten it. |
 | `jti` | string | yes (auto-generated) | Unique token ID (128-bit, base64url), used as the key for usage-tracking / replay bounds. |
+| `dlg` | string | no | Agent id allowed to mint one attenuated child (§12). A token with `dlg` set and no `prf` is not an execution credential. Omitted from the signed JSON when absent, never encoded as `null`. |
+| `prf` | string | no | Parent JCT, compact serialization, attenuated by this token (§12). One hop only. Omitted from the signed JSON when absent, never encoded as `null`. |
 
 ### 3.3 Constraints
 
@@ -130,6 +132,7 @@ ASCII bytes. Header and payload JSON are produced with:
 - keys sorted lexicographically,
 - no insignificant whitespace (`separators=(",", ":")`),
 - `ensure_ascii=True` (non-ASCII escaped, avoiding encoding ambiguity).
+- `dlg` and `prf`, when absent, are omitted. They are not encoded as JSON `null`.
 
 Any conforming implementation MUST reproduce byte-identical JSON for the
 same claims object, since Ed25519 verification is over these exact bytes.
@@ -145,32 +148,39 @@ Given a token string `T` and an expected audience `A`, a verifier MUST:
 3. Reject unless `header.typ == "JCT"` and `header.alg == "EdDSA"`.
 4. Validate the payload against the claims schema (§3.2); reject on
    schema violation (missing/extra/mistyped fields).
-5. Look up (or read from `header.kid`, if the deployment's trust model
-   allows self-asserted keys) the issuer's Ed25519 public key. **A verifier
-   MUST only accept public keys it trusts via out-of-band policy** — JCT's
-   `kid` is a convenience for key identification, not a substitute for a
-   trust decision.
-6. Verify the Ed25519 signature over `header_b64 + "." + payload_b64`.
-   Reject on failure.
+5. Read `header.kid` as a raw 32-byte Ed25519 public key. That key is the
+   only key the signature is checked against. It MUST also be a key the
+   verifier already trusts for `claims.iss` (one configured public key, or
+   a key registry). A verifier MUST NOT try every trusted key and ignore
+   `kid`. A key that appears only in the header, and nowhere in the
+   verifier's trust store, is not trusted. For a token with `prf` (§12),
+   the child key is trusted only as a holder key, not as a root issuer.
+6. Verify the Ed25519 signature over `header_b64 + "." + payload_b64`
+   using the key from step 5. Reject on failure.
 7. Reject unless `claims.exp - claims.iat <= 300`.
 8. Reject unless `claims.iat - leeway <= now <= claims.exp + leeway`
    (`leeway` defaults to 2 seconds, to absorb clock skew).
 9. If a revocation store was supplied, reject if `claims.jti` is revoked
    (§9). This step is skipped when the verifier passes no revocation
    store — revocation is opt-in, not required to verify a token.
-10. If an audience `A` was supplied, reject unless `claims.sub == A`.
-11. Check that the capability required for the attempted action is present
+10. Delegation (§12). If `prf` is set, the parent token is verified through
+    steps 1–9 and attenuation is enforced. If `dlg` is set and `prf` is
+    absent, reject: the token is not an execution credential.
+11. If an audience `A` was supplied, reject unless `claims.sub == A`.
+12. Check that the capability required for the attempted action is present
     in `claims.capabilities` (exact or wildcard match); reject otherwise.
-12. Check any parameters of the attempted call against
+13. Check any parameters of the attempted call against
     `claims.constraints.allowed_params`; reject on mismatch.
-13. Atomically check and update a `jti`-keyed usage record against
-    `max_calls`, `max_amount_usd`, and `rate_limit_per_min`; reject if the
-    attempted action would violate any of them.
+14. If `max_calls`, `max_amount_usd`, or `rate_limit_per_min` is present
+    and the verifier has no usage tracker, reject. Otherwise atomically
+    check and update a `jti`-keyed usage record against those limits;
+    reject if the attempted action would violate any of them.
 
-Steps 1–10 are pure functions of the token (plus, for step 9, the
-revocation store's current state) and require no per-call local policy.
-Steps 11–13 require the verifier's local policy (what capability does
-*this* call require?) and, for constraints, a stateful tracker.
+Steps 1–11 are pure functions of the token (plus, for step 9, the
+revocation store's current state, and for step 10, the parent token) and
+require no per-call local policy. Steps 12–14 require the verifier's local
+policy (what capability does *this* call require?) and, for constraints, a
+stateful tracker.
 
 ## 5. Sequence Diagram
 
@@ -236,7 +246,9 @@ concreteness, not as the normative name:
 | `AUDIENCE_MISMATCH` | `AudienceMismatchError` | `sub != audience`. |
 | `UNKNOWN_ISSUER` | `UnknownIssuerError` | Verifying against a `KeyRegistry` (§8) that has no key registered for `claims.iss` at all. |
 | `CAPABILITY_VIOLATION` | `CapabilityViolationError` | Required capability not in `capabilities`. |
-| `CONSTRAINT_VIOLATION` | `ConstraintViolationError` | `max_calls`, `max_amount_usd`, `rate_limit_per_min`, or `allowed_params` would be violated. |
+| `CONSTRAINT_VIOLATION` | `ConstraintViolationError` | `max_calls`, `max_amount_usd`, `rate_limit_per_min`, or `allowed_params` would be violated, including a stateful limit with no usage tracker. |
+| `DELEGATION_VIOLATION` | `DelegationError` | Attenuation widens the parent, the chain is longer than one hop, or a delegable token is presented as an execution credential (§12). |
+| `POLICY_VIOLATION` | `PolicyViolationError` | Raised at issuance, not verification: the request is outside the issuer's configured grant. |
 
 `spec/test-vectors/vectors.json` (see [spec/test-vectors/README.md](spec/test-vectors/README.md))
 gives signed tokens and expected outcomes keyed by these same codes, so an
@@ -245,9 +257,9 @@ without needing to ask this repo anything further.
 
 ## 8. Key Registry and Rotation
 
-Step 5 of the verification algorithm (§4) says a verifier "looks up ... the
-issuer's Ed25519 public key" and must only trust keys it accepts via
-out-of-band policy. The reference SDK's `swarmauth.registry.KeyRegistry`
+Step 5 of the verification algorithm (§4) says a verifier reads `header.kid`
+and accepts that signature only when the key is already trusted for
+`claims.iss`. The reference SDK's `swarmauth.registry.KeyRegistry`
 implements that policy store for the common case of many issuing agents:
 
 - **Multi-issuer**: `keys_for(iss)` returns the trusted key(s) for a
@@ -360,15 +372,59 @@ against the same `jti`.
   does not mandate a specific PKI for how a `KeyRegistry` (§8) initially
   learns an issuer's public key — that's out-of-band policy, same as before.
   But once registered, rotation and revocation are immediate and in-process
-  via the registry itself (§8), not a "deployment concern" left unsolved:
-  `kid` remains a hint for key identification, never a trust root, and a
-  verifier's `KeyRegistry` is the actual trust root.
+  via the registry itself (§8): `kid` selects which trusted key signed the
+  token, and a verifier's `KeyRegistry` is the trust root. A key that is
+  only named by `kid` is not trusted.
 - **Revoking a single token does not require revoking its issuer's key.**
   Use a `RevocationStore` (§9) to reject one compromised `jti`; reserve
   `KeyRegistry.revoke` (§8) for when the issuer's signing key itself is
   compromised, since that invalidates every token it ever signed.
 
-## 12. Versioning
+- **Issuers enforce a grant before they sign.** The reference SDK's
+  `IssuerPolicy` names which agent may mint which capability, for which
+  audience, under which ceilings, and which delegate ids may appear in
+  `dlg`. A signing key with no such grant will sign whatever it is asked.
+- **Holder keys are not root keys.** A worker registered only as a holder
+  can attenuate a parent that names them. A fresh token signed by that
+  same key, with no `prf`, is not a root credential.
+- **In-memory usage entries expire.** The reference in-memory tracker drops
+  a `jti` shortly after `exp` (long enough to cover the default leeway) so
+  the table does not grow for the life of the process. Redis keys already
+  expire on their own.
+
+## 12. Attenuated Delegation
+
+One hop, so a worker can narrow a grant without being able to widen it or
+mint a new one.
+
+A **delegable** token has `dlg` set to an agent id and has no `prf`. It is
+signed by a root key. Verifiers MUST reject it at an execution boundary.
+Its only use is as the parent of a child token.
+
+A **child** token has `prf` set to that parent and has no `dlg`. It is
+signed by the holder key of `iss`. Verifiers MUST:
+
+1. Trust the child key only as a holder key for `claims.iss`, registered
+   out of band. A self-asserted `kid` is not enough: `dlg` names an agent
+   id, not a key, so the verifier must already know that agent's public key.
+2. Verify the parent as a root token (steps 1–9). The parent MUST NOT
+   itself have `prf`.
+3. Require `parent.dlg == child.iss` and `child.sub == parent.sub`.
+4. Require `parent.iat <= child.iat` and `child.exp <= parent.exp`, and
+   the child's own TTL still satisfies §3.2.
+5. Require every child capability to be equal to, or narrower than, some
+   parent capability. A parent entry ending in `:*` covers that prefix.
+   A child MUST NOT introduce a wildcard the parent does not have.
+6. Require every numeric parent limit (`max_calls`, `max_amount_usd`,
+   `rate_limit_per_min`) to be present on the child and less than or equal
+   to the parent. An absent parent limit may stay absent or be set. Every
+   parent `allowed_params` pin must appear unchanged on the child. The
+   child may add pins.
+
+The reference SDK exposes this as `CapabilityToken.attenuate` /
+`TokenIssuer.attenuate`, and as `KeyRegistry.register_holder`.
+
+## 13. Versioning
 
 This is `0.1.0-draft`, the MVP surface. Backwards-incompatible changes to
 the header/claims schema will bump the `typ` value away from `"JCT"` (or

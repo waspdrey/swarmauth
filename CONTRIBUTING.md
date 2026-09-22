@@ -165,6 +165,9 @@ without the API-stability guarantee `1.0.0` will carry.
   from inside the repo directory does exactly this), and fails loudly if
   anything doesn't pass or if the install didn't actually come from the
   wheel. Do not tag or publish a release this script hasn't passed for.
+  The npm package in `js/` publishes from the same release via
+  `.github/workflows/npm.yml`. That job needs a repository secret
+  `NPM_TOKEN` with permission to publish `swarmauth`.
 
 ## Reporting a vulnerability
 
