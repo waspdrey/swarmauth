@@ -22,7 +22,9 @@ import {
   TokenNotYetValidError,
   TokenRevokedError,
   UnknownIssuerError,
+  MAX_TTL_SECONDS,
   buildToken,
+  issue,
   verify,
 } from "../src/index.js";
 import type { CapabilityClaims } from "../src/index.js";
@@ -117,3 +119,14 @@ for (const testCase of vectorsData.temporal_test_cases as Array<Record<string, u
     }
   });
 }
+
+test("issue rejects a ttl above MAX_TTL_SECONDS instead of shortening it, and defaults to 10s", async () => {
+  const kp = await KeyPair.generate();
+  const base = { issuerKeyPair: kp, iss: "a", sub: "b", capabilities: ["x"] };
+  await assert.rejects(() => issue({ ...base, ttlSeconds: MAX_TTL_SECONDS + 1 }), RangeError);
+  await assert.rejects(() => issue({ ...base, ttlSeconds: 0 }), RangeError);
+  const claims = await verify(await issue(base), { issuerPublicKey: kp.publicBytes });
+  assert.equal(claims.exp - claims.iat, 10);
+  const atCeiling = await verify(await issue({ ...base, ttlSeconds: MAX_TTL_SECONDS }), { issuerPublicKey: kp.publicBytes });
+  assert.equal(atCeiling.exp - atCeiling.iat, MAX_TTL_SECONDS);
+});

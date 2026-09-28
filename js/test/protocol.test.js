@@ -72,14 +72,14 @@ test("temporal cases", () => {
   }
 });
 
-test("issue rejects a ttl above 300 and encodes whole-number amounts as floats", () => {
-  assert.throws(() => issue({ privateKey: seed, iss: "a", sub: "b", capabilities: ["x"], ttlSeconds: 301 }), /300/);
+test("issue rejects a ttl above 30 and encodes whole-number amounts as floats", () => {
+  assert.throws(() => issue({ privateKey: seed, iss: "a", sub: "b", capabilities: ["x"], ttlSeconds: 31 }), /30/);
   const token = issue({
     privateKey: seed,
     iss: "a",
     sub: "b",
     capabilities: ["x"],
-    ttlSeconds: 60,
+    ttlSeconds: 30,
     constraints: { max_amount_usd: 40, max_calls: 1 },
     iat: 1_700_000_000,
     exp: 1_700_000_060,
@@ -100,7 +100,7 @@ test("policy, runtime token, and one-hop attenuation", () => {
       iss: "agent:root",
       sub: "tool:pay",
       capabilities: ["tool:pay"],
-      maxTtlSeconds: 60,
+      maxTtlSeconds: 30,
       maxCalls: 1,
       delegates: ["agent:worker"],
     }),
@@ -111,7 +111,7 @@ test("policy, runtime token, and one-hop attenuation", () => {
         iss: "agent:root",
         sub: "tool:pay",
         capabilities: ["tool:admin"],
-        ttlSeconds: 60,
+        ttlSeconds: 30,
         constraints: { max_calls: 1 },
       }),
     (error) => error.code === "POLICY_VIOLATION",
@@ -120,7 +120,7 @@ test("policy, runtime token, and one-hop attenuation", () => {
     iss: "agent:root",
     sub: "tool:pay",
     capabilities: ["tool:pay"],
-    ttlSeconds: 60,
+    ttlSeconds: 30,
     constraints: { max_calls: 1 },
     dlg: "agent:worker",
   });
@@ -130,7 +130,7 @@ test("policy, runtime token, and one-hop attenuation", () => {
     iss: "agent:root",
     sub: "tool:pay",
     capabilities: ["tool:pay"],
-    ttlSeconds: 60,
+    ttlSeconds: 30,
     dlg: "agent:worker",
     constraints: { max_calls: 1 },
   });
@@ -145,7 +145,7 @@ test("policy, runtime token, and one-hop attenuation", () => {
     iss: "agent:worker",
     capabilities: ["tool:pay"],
     constraints: { max_calls: 1 },
-    ttlSeconds: 30,
+    ttlSeconds: 20,
   });
   const claims = verify(child, { registry, audience: "tool:pay" });
   assert.equal(claims.iss, "agent:worker");
@@ -167,7 +167,7 @@ test("stateful constraints fail closed without a tracker", () => {
     iss: "a",
     sub: "b",
     capabilities: ["b"],
-    ttlSeconds: 60,
+    ttlSeconds: 30,
     constraints: { max_calls: 1 },
   });
   assert.throws(
