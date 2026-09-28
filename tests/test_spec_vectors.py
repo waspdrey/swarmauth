@@ -100,7 +100,7 @@ def _trust(vector: dict, issuer_keypair: KeyPair) -> dict:
 def _build_token_with_exact_claims(keypair: KeyPair, *, iat: int, exp: int, jti: str) -> str:
     """Bypasses CapabilityToken.issue()'s MAX_TTL_SECONDS clamping and
     time.time()-derived iat -- needed to construct a token whose exp - iat
-    deliberately exceeds the ceiling, for the ttl_ceiling_301_rejected case.
+    deliberately exceeds the ceiling, for the ttl_ceiling_31_rejected case.
     """
     claims = CapabilityClaims(
         iss="agent:requester-01", sub="tool:x", capabilities=["tool:x"], iat=iat, exp=exp, jti=jti

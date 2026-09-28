@@ -18,7 +18,7 @@ def _chain():
         sub="tool:process_payout",
         capabilities=["tool:*"],
         constraints=Constraints(max_calls=2, max_amount_usd=100.0, allowed_params={"destination_account": "acct_123"}),
-        ttl_seconds=60,
+        ttl_seconds=30,
         dlg="agent:worker-02",
     )
     child = TokenIssuer(worker).attenuate(
@@ -26,7 +26,7 @@ def _chain():
         iss="agent:worker-02",
         capabilities=["tool:process_payout"],
         constraints=Constraints(max_calls=1, max_amount_usd=40.0, allowed_params={"destination_account": "acct_123"}),
-        ttl_seconds=30,
+        ttl_seconds=20,
     )
     return registry, parent, child
 
@@ -88,7 +88,7 @@ def test_attenuate_rejects_a_wider_capability_and_a_second_hop():
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         constraints=Constraints(max_calls=1),
-        ttl_seconds=60,
+        ttl_seconds=30,
         dlg="agent:worker-02",
     )
     with pytest.raises(DelegationError):
@@ -97,14 +97,14 @@ def test_attenuate_rejects_a_wider_capability_and_a_second_hop():
             iss="agent:worker-02",
             capabilities=["tool:*"],
             constraints=Constraints(max_calls=1),
-            ttl_seconds=30,
+            ttl_seconds=20,
         )
     child = TokenIssuer(worker).attenuate(
         parent,
         iss="agent:worker-02",
         capabilities=["tool:process_payout"],
         constraints=Constraints(max_calls=1),
-        ttl_seconds=30,
+        ttl_seconds=20,
     )
     with pytest.raises(DelegationError, match="one delegation hop"):
         TokenIssuer(other).attenuate(
@@ -112,7 +112,7 @@ def test_attenuate_rejects_a_wider_capability_and_a_second_hop():
             iss="agent:other",
             capabilities=["tool:process_payout"],
             constraints=Constraints(max_calls=1),
-            ttl_seconds=20,
+            ttl_seconds=10,
         )
 
 
@@ -127,7 +127,7 @@ def test_hand_widened_child_is_rejected_at_verification():
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         constraints=Constraints(max_calls=1),
-        ttl_seconds=60,
+        ttl_seconds=30,
         dlg="agent:worker-02",
     )
     _header, parent_claims, _signing = CapabilityToken.parse(parent)

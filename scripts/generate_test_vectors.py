@@ -82,7 +82,7 @@ def _self_check_wire_format(keypair: KeyPair, token: str) -> None:
     deliberately skips CapabilityToken.verify()'s wall-clock freshness
     check. A byte-exact vector must have a FIXED iat/exp to be reproducible,
     which means it inevitably falls outside any real "now" shortly after
-    generation (doubly so given the 300s hard TTL ceiling) -- that's
+    generation (doubly so given the 30s hard TTL ceiling) -- that's
     expected and does not indicate a broken vector. What must never drift
     is the signature and canonical encoding, which this does check.
     """
@@ -107,7 +107,7 @@ def main() -> None:
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         iat=FIXED_IAT,
-        exp=FIXED_IAT + 60,
+        exp=FIXED_IAT + 30,
         jti="vector-minimal-0001",
     )
     token, header, signing_input = _build_token(keypair, claims)
@@ -140,7 +140,7 @@ def main() -> None:
             allowed_params={"destination_account": "acct_123"},
         ),
         iat=FIXED_IAT,
-        exp=FIXED_IAT + 300,
+        exp=FIXED_IAT + 30,
         jti="vector-full-constraints-0002",
     )
     token, header, signing_input = _build_token(keypair, claims)
@@ -149,7 +149,7 @@ def main() -> None:
         {
             "name": "full_constraints_and_wildcard",
             "valid": True,
-            "description": "Wildcard capability, all four constraint fields populated, exp-iat at the 300s ceiling exactly. "
+            "description": "Wildcard capability, all four constraint fields populated, exp-iat at the 30s ceiling exactly. "
             "Same freshness caveat as minimal_valid: iat/exp are fixed, not currently fresh.",
             "header": header,
             "claims": claims_wire_dict(claims),
@@ -164,7 +164,7 @@ def main() -> None:
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         iat=FIXED_IAT,
-        exp=FIXED_IAT + 301,
+        exp=FIXED_IAT + 31,
         jti="vector-ttl-exceeded-0003",
     )
     token, header, signing_input = _build_token(keypair, claims)
@@ -177,7 +177,7 @@ def main() -> None:
         {
             "name": "ttl_exceeds_max",
             "valid": False,
-            "description": "exp - iat = 301 > MAX_TTL_SECONDS (300). Rejected on this ground "
+            "description": "exp - iat = 31 > MAX_TTL_SECONDS (30). Rejected on this ground "
             "alone, independent of wall-clock time, so this vector never goes stale.",
             "error_code": "TOKEN_EXPIRED",
             "header": header,
@@ -193,7 +193,7 @@ def main() -> None:
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         iat=FIXED_IAT,
-        exp=FIXED_IAT + 60,
+        exp=FIXED_IAT + 30,
         jti="vector-tampered-sig-0004",
     )
     token, header, signing_input = _build_token(keypair, claims)
@@ -239,7 +239,7 @@ def main() -> None:
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         iat=FIXED_IAT,
-        exp=FIXED_IAT + 60,
+        exp=FIXED_IAT + 30,
         jti="vector-kid-mismatch-0005",
     )
     payload_b64 = b64url_encode(_canonical_json(claims_wire_dict(claims)))
@@ -273,7 +273,7 @@ def main() -> None:
         capabilities=["tool:*"],
         constraints=Constraints(max_calls=3, max_amount_usd=100.0),
         iat=FIXED_IAT,
-        exp=FIXED_IAT + 120,
+        exp=FIXED_IAT + 30,
         jti="vector-delegation-parent-0006",
         dlg=delegate_iss,
     )
@@ -303,7 +303,7 @@ def main() -> None:
         capabilities=["tool:process_payout"],
         constraints=Constraints(max_calls=1, max_amount_usd=40.0),
         iat=FIXED_IAT,
-        exp=FIXED_IAT + 60,
+        exp=FIXED_IAT + 30,
         jti="vector-delegation-child-0007",
         prf=parent_token,
     )
@@ -338,7 +338,7 @@ def main() -> None:
         capabilities=["other:admin"],
         constraints=Constraints(max_calls=1, max_amount_usd=40.0),
         iat=FIXED_IAT,
-        exp=FIXED_IAT + 60,
+        exp=FIXED_IAT + 30,
         jti="vector-delegation-widened-0008",
         prf=parent_token,
     )
@@ -374,28 +374,28 @@ def main() -> None:
     # any keypair or token.
     temporal_test_cases = [
         {
-            "name": "ttl_ceiling_exact_300_is_ok",
+            "name": "ttl_ceiling_exact_30_is_ok",
             "iat": 1000,
-            "exp": 1300,
+            "exp": 1030,
             "leeway_seconds": 2,
-            "now": 1150,
+            "now": 1015,
             "expect_valid": True,
-            "reason": "exp - iat == 300 (MAX_TTL_SECONDS), the ceiling itself, not over it.",
+            "reason": "exp - iat == 30 (MAX_TTL_SECONDS), the ceiling itself, not over it.",
         },
         {
-            "name": "ttl_ceiling_301_rejected",
+            "name": "ttl_ceiling_31_rejected",
             "iat": 1000,
-            "exp": 1301,
+            "exp": 1031,
             "leeway_seconds": 2,
-            "now": 1150,
+            "now": 1015,
             "expect_valid": False,
             "error_code": "TOKEN_EXPIRED",
-            "reason": "exp - iat == 301 > MAX_TTL_SECONDS. Checked before, and independent of, now.",
+            "reason": "exp - iat == 31 > MAX_TTL_SECONDS. Checked before, and independent of, now.",
         },
         {
             "name": "not_yet_valid",
             "iat": 1000,
-            "exp": 1060,
+            "exp": 1030,
             "leeway_seconds": 2,
             "now": 997,
             "expect_valid": False,
@@ -405,7 +405,7 @@ def main() -> None:
         {
             "name": "not_yet_valid_leeway_boundary_ok",
             "iat": 1000,
-            "exp": 1060,
+            "exp": 1030,
             "leeway_seconds": 2,
             "now": 998,
             "expect_valid": True,
@@ -414,21 +414,21 @@ def main() -> None:
         {
             "name": "expired_past_leeway",
             "iat": 1000,
-            "exp": 1060,
+            "exp": 1030,
             "leeway_seconds": 2,
-            "now": 1063,
+            "now": 1033,
             "expect_valid": False,
             "error_code": "TOKEN_EXPIRED",
-            "reason": "now (1063) > exp (1060) + leeway (2) == 1062.",
+            "reason": "now (1033) > exp (1030) + leeway (2) == 1032.",
         },
         {
             "name": "expired_leeway_boundary_ok",
             "iat": 1000,
-            "exp": 1060,
+            "exp": 1030,
             "leeway_seconds": 2,
-            "now": 1062,
+            "now": 1032,
             "expect_valid": True,
-            "reason": "now (1062) == exp (1060) + leeway (2), the boundary itself is accepted.",
+            "reason": "now (1032) == exp (1030) + leeway (2), the boundary itself is accepted.",
         },
     ]
 

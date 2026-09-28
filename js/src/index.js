@@ -5,7 +5,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createPrivateKey, createPublicKey, randomBytes, sign, verify as verifyEd25519 } from "node:crypto";
 
-export const MAX_TTL_SECONDS = 300;
+export const MAX_TTL_SECONDS = 30;
 const TOKEN_TYPE = "JCT";
 const ALG = "EdDSA";
 const PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -117,7 +117,7 @@ function signToken(seed, claims) {
   return `${signingInput}.${b64urlEncode(signature)}`;
 }
 
-export function issue({ privateKey, iss, sub, capabilities, constraints, ttlSeconds = 60, dlg, iat, exp, jti }) {
+export function issue({ privateKey, iss, sub, capabilities, constraints, ttlSeconds = 10, dlg, iat, exp, jti }) {
   const seed = Buffer.from(privateKey);
   if (seed.length !== 32) throw new Error("privateKey must be a 32-byte Ed25519 seed");
   if (iat == null) requireTtl(ttlSeconds);
@@ -275,7 +275,7 @@ export function verify(token, options = {}) {
   return claims;
 }
 
-export function attenuate({ privateKey, parent, iss, capabilities, constraints, ttlSeconds = 60 }) {
+export function attenuate({ privateKey, parent, iss, capabilities, constraints, ttlSeconds = 10 }) {
   requireTtl(ttlSeconds);
   const parentClaims = parse(parent).claims;
   const now = Math.floor(Date.now() / 1000);
