@@ -45,7 +45,7 @@ const token = await issue({
   sub: "tool:process_payout",
   capabilities: ["tool:process_payout"],
   constraints: { maxAmountUsd: 1000, allowedParams: { destination_account: "acct_1" } },
-  ttlSeconds: 60,
+  ttlSeconds: 30,
 });
 
 // ... token travels to whatever verifies the tool call ...

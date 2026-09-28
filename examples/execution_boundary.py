@@ -23,7 +23,7 @@ def main() -> None:
                 iss="agent:requester-01",
                 sub="tool:process_payout",
                 capabilities=("tool:process_payout",),
-                max_ttl_seconds=60,
+                max_ttl_seconds=30,
                 max_calls=1,
                 max_amount_usd=1000.0,
                 delegates=("agent:worker-02",),
@@ -38,7 +38,7 @@ def main() -> None:
             sub="tool:process_payout",
             capabilities=["tool:wire_funds"],
             constraints=swarmauth.Constraints(max_calls=1, max_amount_usd=10.0),
-            ttl_seconds=60,
+            ttl_seconds=30,
         )
         raise SystemExit("issuer signed a capability the grant does not allow")
     except PolicyViolationError:
@@ -49,7 +49,7 @@ def main() -> None:
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         constraints=swarmauth.Constraints(max_calls=1, max_amount_usd=1000.0),
-        ttl_seconds=60,
+        ttl_seconds=30,
     )
     tracker = swarmauth.UsageTracker()
     executed: list[float] = []
@@ -83,7 +83,7 @@ def main() -> None:
         sub="tool:process_payout",
         capabilities=["tool:process_payout"],
         constraints=swarmauth.Constraints(max_calls=1, max_amount_usd=1000.0),
-        ttl_seconds=60,
+        ttl_seconds=30,
         dlg="agent:worker-02",
     )
     registry = swarmauth.registry.KeyRegistry()
@@ -100,7 +100,7 @@ def main() -> None:
         iss="agent:worker-02",
         capabilities=["tool:process_payout"],
         constraints=swarmauth.Constraints(max_calls=1, max_amount_usd=25.0),
-        ttl_seconds=30,
+        ttl_seconds=20,
     )
     child_tracker = swarmauth.UsageTracker()
 

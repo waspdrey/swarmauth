@@ -22,15 +22,22 @@ def test_issue_and_verify_roundtrip():
     assert claims.capabilities == ["tool:b"]
 
 
-def test_ttl_above_300_is_rejected():
+def test_default_ttl_is_10_seconds():
     kp = KeyPair.generate()
-    with pytest.raises(ValueError, match="300"):
-        CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=301)
-    with pytest.raises(ValueError, match="300"):
-        CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=0)
-    token = CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=300)
+    token = CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"])
     _, claims, _ = CapabilityToken.parse(token)
-    assert claims.exp - claims.iat == 300
+    assert claims.exp - claims.iat == 10
+
+
+def test_ttl_above_30_is_rejected():
+    kp = KeyPair.generate()
+    with pytest.raises(ValueError, match="30"):
+        CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=31)
+    with pytest.raises(ValueError, match="30"):
+        CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=0)
+    token = CapabilityToken.issue(issuer_keypair=kp, iss="a", sub="b", capabilities=["x"], ttl_seconds=30)
+    _, claims, _ = CapabilityToken.parse(token)
+    assert claims.exp - claims.iat == 30
 
 
 def test_issued_token_omits_absent_delegation_claims():

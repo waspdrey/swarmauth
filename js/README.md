@@ -2,7 +2,7 @@
 
 Signed, short-lived capability tokens for tool calls made by autonomous agents.
 
-A token names the tool it is for, the capabilities it grants, and the limits on calls, spend, and parameters. Every token expires within 300 seconds. The signing key and the issuer policy stay in a process the model cannot call. The runtime attaches the token with `useToken` before the tool runs.
+A token names the tool it is for, the capabilities it grants, and the limits on calls, spend, and parameters. Every token expires within 30 seconds (10 by default). The signing key and the issuer policy stay in a process the model cannot call. The runtime attaches the token with `useToken` before the tool runs.
 
 This package speaks the same [JCT](https://github.com/waspdrey/swarmauth/blob/main/SPEC.md) wire format as [swarmauth on PyPI](https://pypi.org/project/swarmauth/). Node.js 18 or newer. ECMAScript modules. No runtime dependencies.
 
@@ -36,7 +36,7 @@ const request = {
   sub: "tool:process_payout",
   capabilities: ["tool:process_payout"],
   constraints: { max_calls: 1, max_amount_usd: 1000 },
-  ttlSeconds: 60,
+  ttlSeconds: 30,
 };
 
 const policy = new IssuerPolicy([
@@ -44,7 +44,7 @@ const policy = new IssuerPolicy([
     iss: request.iss,
     sub: request.sub,
     capabilities: request.capabilities,
-    maxTtlSeconds: 60,
+    maxTtlSeconds: 30,
     maxCalls: 1,
     maxAmountUsd: 1000,
   }),
@@ -107,7 +107,7 @@ const parent = issue({
   sub: "tool:process_payout",
   capabilities: ["tool:process_payout"],
   constraints: { max_calls: 1, max_amount_usd: 1000 },
-  ttlSeconds: 60,
+  ttlSeconds: 30,
   dlg: "agent:worker",
 });
 
@@ -117,7 +117,7 @@ const child = attenuate({
   iss: "agent:worker",
   capabilities: ["tool:process_payout"],
   constraints: { max_calls: 1, max_amount_usd: 50 },
-  ttlSeconds: 30,
+  ttlSeconds: 20,
 });
 
 const registry = new KeyRegistry();

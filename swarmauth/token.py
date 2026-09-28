@@ -34,7 +34,7 @@ from swarmauth.revocation import RevocationStore
 
 TOKEN_TYPE = "JCT"  # JSON Capability Token
 ALG = "EdDSA"
-MAX_TTL_SECONDS = 300  # hard ceiling; enforced independent of caller input
+MAX_TTL_SECONDS = 30  # hard ceiling; enforced independent of caller input
 
 
 class Constraints(BaseModel):
@@ -70,7 +70,7 @@ class CapabilityClaims(BaseModel):
     )
     constraints: Constraints = Field(default_factory=Constraints)
     iat: int = Field(..., description="Issued-at, unix seconds.")
-    exp: int = Field(..., description="Expiry, unix seconds. Must satisfy exp - iat <= 300.")
+    exp: int = Field(..., description="Expiry, unix seconds. Must satisfy exp - iat <= 30.")
     jti: str = Field(default_factory=generate_jti, description="Unique token ID, for usage/replay tracking.")
     dlg: Optional[str] = Field(
         default=None,
@@ -283,7 +283,7 @@ class CapabilityToken:
         sub: str,
         capabilities: list[str],
         constraints: Optional[Constraints] = None,
-        ttl_seconds: int = 60,
+        ttl_seconds: int = 10,
         dlg: Optional[str] = None,
     ) -> str:
         """Create and sign a new capability token.
@@ -399,7 +399,7 @@ class CapabilityToken:
         iss: str,
         capabilities: list[str],
         constraints: Optional[Constraints] = None,
-        ttl_seconds: int = 60,
+        ttl_seconds: int = 10,
     ) -> str:
         """Mint one narrower token from `parent`.
 

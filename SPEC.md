@@ -55,7 +55,7 @@ SwarmAuth's design response:
 | Risk | Mitigation |
 |---|---|
 | Compromised agent forges unlimited authority | Tokens carry an explicit `capabilities` allowlist; anything not listed is denied by default. |
-| Leaked token used after the fact | `exp` is capped at 300 seconds from issuance; leaked tokens self-invalidate quickly. |
+| Leaked token used after the fact | `exp` is capped at 30 seconds from issuance; leaked tokens self-invalidate quickly. |
 | Leaked token replayed rapidly within its lifetime | `constraints.max_calls`, `constraints.rate_limit_per_min`, and `jti`-keyed usage tracking bound repeat use. |
 | Confused deputy (token used against the wrong target) | `sub` binds the token to a specific audience; verifiers must check `sub == audience`. |
 | Runaway financial/resource impact despite a valid capability | `constraints.max_amount_usd` and `constraints.allowed_params` bound *what* an authorized call can do, not just *that* it's authorized. |
@@ -101,7 +101,7 @@ base64url(header) . base64url(payload) . base64url(signature)
 | `capabilities` | string[] | yes, non-empty | Capabilities granted. Exact match (`"tool:read_invoice"`) or a `prefix:*` wildcard (`"tool:*"`). |
 | `constraints` | object | no (defaults empty) | See §3.3. |
 | `iat` | integer | yes | Issued-at, Unix seconds. |
-| `exp` | integer | yes | Expiry, Unix seconds. **`exp - iat` MUST be ≤ 300.** Verifiers reject tokens that violate this even if the signature is valid. Issuers MUST reject a requested lifetime above 300 seconds; they MUST NOT silently shorten it. |
+| `exp` | integer | yes | Expiry, Unix seconds. **`exp - iat` MUST be ≤ 30.** Verifiers reject tokens that violate this even if the signature is valid. Issuers MUST reject a requested lifetime above 30 seconds; they MUST NOT silently shorten it. |
 | `jti` | string | yes (auto-generated) | Unique token ID (128-bit, base64url), used as the key for usage-tracking / replay bounds. |
 | `dlg` | string | no | Agent id allowed to mint one attenuated child (§12). A token with `dlg` set and no `prf` is not an execution credential. Omitted from the signed JSON when absent, never encoded as `null`. |
 | `prf` | string | no | Parent JCT, compact serialization, attenuated by this token (§12). One hop only. Omitted from the signed JSON when absent, never encoded as `null`. |
@@ -157,7 +157,7 @@ Given a token string `T` and an expected audience `A`, a verifier MUST:
    the child key is trusted only as a holder key, not as a root issuer.
 6. Verify the Ed25519 signature over `header_b64 + "." + payload_b64`
    using the key from step 5. Reject on failure.
-7. Reject unless `claims.exp - claims.iat <= 300`.
+7. Reject unless `claims.exp - claims.iat <= 30`.
 8. Reject unless `claims.iat - leeway <= now <= claims.exp + leeway`
    (`leeway` defaults to 2 seconds, to absorb clock skew).
 9. If a revocation store was supplied, reject if `claims.jti` is revoked
@@ -190,7 +190,7 @@ sequenceDiagram
     participant I as SwarmAuth Token Issuer
     participant B as Agent B / Tool (Capability Owner)
 
-    A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=300s)
+    A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=30s)
     I->>I: Evaluate policy — is A allowed to request these capabilities against B?
     I-->>A: Signed Capability Token (JCT)
     A->>B: Tool call, with JCT attached (header/metadata)
@@ -240,7 +240,7 @@ concreteness, not as the normative name:
 |---|---|---|
 | `MALFORMED_TOKEN` | `MalformedTokenError` | Token isn't 3 valid base64url/JSON segments matching the schema. |
 | `INVALID_SIGNATURE` | `InvalidSignatureError` | Ed25519 verification fails. |
-| `TOKEN_EXPIRED` | `TokenExpiredError` | `now > exp + leeway`, or `exp - iat > 300`. |
+| `TOKEN_EXPIRED` | `TokenExpiredError` | `now > exp + leeway`, or `exp - iat > 30`. |
 | `TOKEN_NOT_YET_VALID` | `TokenNotYetValidError` | `now < iat - leeway`. |
 | `TOKEN_REVOKED` | `TokenRevokedError` | A revocation store (§9) was supplied and `jti` is revoked. |
 | `AUDIENCE_MISMATCH` | `AudienceMismatchError` | `sub != audience`. |
@@ -286,7 +286,7 @@ guard(...)` and `verify_and_check(...)` accept the same substitution.
 
 ## 9. Token Revocation
 
-A JCT's short TTL (§4 step 7) bounds exposure, but 300 seconds is not always
+A JCT's short TTL (§4 step 7) bounds exposure, but 30 seconds is not always
 short enough: an agent may be compromised, a session ended, or a specific
 token issued in error, and a verifier needs to reject that exact `jti`
 immediately rather than wait out its remaining lifetime. Step 9 of the
@@ -347,10 +347,17 @@ against the same `jti`.
 
 ## 11. Security Considerations
 
-- **300-second ceiling is a protocol invariant, not a default.** A verifier
-  MUST reject any token where `exp - iat > 300`, even if that token carries
+- **30-second ceiling is a protocol invariant, not a default.** A verifier
+  MUST reject any token where `exp - iat > 30`, even if that token carries
   a valid signature — this bounds the damage from an issuer that is
   tricked, buggy, or compromised into minting an unusually long-lived token.
+- **Mint tokens at call time, and make sensitive ones single-use.** The
+  reference SDKs default to a 10-second lifetime, well inside the ceiling.
+  A short lifetime narrows the window in which a leaked token is useful;
+  `constraints.max_calls = 1` closes it, because the usage tracker records
+  the `jti` and rejects every later presentation. Tools that move money,
+  change records, or run infrastructure commands SHOULD be granted
+  single-use tokens.
 - **No refresh tokens, no long-lived sessions.** Each delegated action gets
   its own token. This trades a small amount of issuance overhead for a hard
   ceiling on exposure window; given the sub-millisecond cost of Ed25519

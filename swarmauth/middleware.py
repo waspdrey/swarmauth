@@ -110,7 +110,7 @@ class TokenIssuer:
         sub: str,
         capabilities: list[str],
         constraints: Optional[Constraints] = None,
-        ttl_seconds: int = 60,
+        ttl_seconds: int = 10,
         dlg: Optional[str] = None,
     ) -> str:
         resolved = constraints or Constraints()
@@ -140,7 +140,7 @@ class TokenIssuer:
         iss: str,
         capabilities: list[str],
         constraints: Optional[Constraints] = None,
-        ttl_seconds: int = 60,
+        ttl_seconds: int = 10,
     ) -> str:
         """Mint one narrower child of `parent` with this issuer's key."""
         resolved = constraints or Constraints()
@@ -176,7 +176,7 @@ class UsageTracker:
     """In-memory, thread-safe tracker of per-token usage for constraint enforcement.
 
     Keyed by `jti`. This is process-local and non-durable, which fits
-    SwarmAuth's <=300s token lifetime -- a token can't outlive the process
+    SwarmAuth's <=30s token lifetime -- a token can't outlive the process
     worth tracking it against. For a distributed deployment, back this with
     Redis (or similar) behind the same `check_and_record` interface.
     """

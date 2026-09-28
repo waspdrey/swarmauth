@@ -39,7 +39,7 @@ error codes referenced below.
   "temporal_test_cases": [
     {
       "name": "not_yet_valid",
-      "iat": 1000, "exp": 1060, "leeway_seconds": 2, "now": 997,
+      "iat": 1000, "exp": 1030, "leeway_seconds": 2, "now": 997,
       "expect_valid": false,
       "error_code": "TOKEN_NOT_YET_VALID",
       "reason": "now (997) < iat (1000) - leeway (2) == 998."
@@ -66,7 +66,7 @@ error codes referenced below.
 
 **A note on freshness:** `iat`/`exp` in `vectors` are fixed (for byte
 reproducibility), which means any vector marked `"valid": true` will
-eventually — and, given the 300-second TTL ceiling, quite quickly — read as
+eventually — and, given the 30-second TTL ceiling, quite quickly — read as
 expired against your *real* clock. That's expected. `"valid": true` here
 means "correct signature, schema, and canonicalization," not "currently
 within its time window." If your implementation's verify function bundles

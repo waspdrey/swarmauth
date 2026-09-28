@@ -14,7 +14,7 @@ Design notes
 ------------
 - State is keyed by the token's `jti`, exactly like `UsageTracker`.
 - Redis keys are given a TTL instead of being manually cleaned up: since
-  every JCT expires within `swarmauth.token.MAX_TTL_SECONDS` (300s) and a
+  every JCT expires within `swarmauth.token.MAX_TTL_SECONDS` (30s) and a
   verifier must independently reject an expired token anyway, there is never
   a legitimate reason to query a jti's usage after that window -- so letting
   Redis expire the key is both correct and avoids unbounded key growth.
