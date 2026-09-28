@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: the token lifetime ceiling is now 30 seconds, down from 300.**
+  `MAX_TTL_SECONDS` is 30 in the Python, JavaScript, and TypeScript SDKs, and
+  SPEC.md §3, §4 step 7, and §11 now require `exp - iat <= 30`. A leaked
+  token is useful for at most 30 seconds plus the 2-second leeway, instead of
+  five minutes. Verifiers on this version reject tokens with a longer
+  lifetime minted by an older issuer (`TOKEN_EXPIRED`); tokens minted by this
+  version still verify on older verifiers. The wire format is unchanged.
+- **The default token lifetime is 10 seconds**, down from 60, for `issue`,
+  `attenuate`, and `TokenIssuer` in all three SDKs. Mint the token when the
+  tool is called. A delegation chain (parent, attenuation, tool call) has to
+  finish inside the parent's lifetime.
+- `IssuerPolicy` grants default to the new 30-second ceiling, and a
+  `max_ttl_seconds` above 30 is rejected.
+- SPEC.md §11 recommends single-use tokens (`max_calls = 1`) for tools that
+  move money, change records, or run infrastructure commands. The usage
+  tracker records the `jti`, so a replayed single-use token is rejected on its second
+  presentation regardless of how much lifetime it has left.
+- `spec/test-vectors/vectors.json` is regenerated for the 30-second ceiling
+  (`ttl_ceiling_exact_30_is_ok`, `ttl_ceiling_31_rejected`).
+
+### Fixed
+
+- The TypeScript SDK's `issue` silently shortened a `ttlSeconds` above the
+  ceiling. It now throws `RangeError`, as SPEC.md §3 requires, matching the
+  Python and JavaScript SDKs.
+
 ## [0.1.7] - 2026-09-22
 
 ### Added

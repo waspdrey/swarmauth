@@ -14,7 +14,7 @@ def _policy() -> IssuerPolicy:
                 iss="agent:requester-01",
                 sub="tool:process_payout",
                 capabilities=("tool:draft_payout",),
-                max_ttl_seconds=60,
+                max_ttl_seconds=30,
                 max_calls=1,
                 max_amount_usd=1000.0,
                 delegates=("agent:worker-02",),
@@ -36,7 +36,7 @@ def test_policy_allows_a_grant_inside_the_ceiling():
             max_amount_usd=1000.0,
             allowed_params={"destination_account": "acct_123"},
         ),
-        ttl_seconds=60,
+        ttl_seconds=30,
         dlg="agent:worker-02",
     )
     assert token
@@ -51,7 +51,7 @@ def test_policy_rejects_a_capability_it_does_not_grant():
             sub="tool:process_payout",
             capabilities=["tool:process_payout"],
             constraints=Constraints(max_calls=1, max_amount_usd=10.0, allowed_params={"destination_account": "acct_123"}),
-            ttl_seconds=60,
+            ttl_seconds=30,
         )
 
 
@@ -65,7 +65,7 @@ def test_policy_rejects_an_omitted_ceiling_and_an_unknown_delegate():
             sub="tool:process_payout",
             capabilities=["tool:draft_payout"],
             constraints=constraints,
-            ttl_seconds=60,
+            ttl_seconds=30,
         )
     with pytest.raises(PolicyViolationError, match="agent:other"):
         issuer.issue(
@@ -77,7 +77,7 @@ def test_policy_rejects_an_omitted_ceiling_and_an_unknown_delegate():
                 max_amount_usd=10.0,
                 allowed_params={"destination_account": "acct_123"},
             ),
-            ttl_seconds=60,
+            ttl_seconds=30,
             dlg="agent:other",
         )
 
@@ -91,12 +91,12 @@ def test_policy_rejects_an_unpinned_parameter_and_an_unknown_audience():
             sub="tool:process_payout",
             capabilities=["tool:draft_payout"],
             constraints=Constraints(max_calls=1, max_amount_usd=10.0),
-            ttl_seconds=60,
+            ttl_seconds=30,
         )
     with pytest.raises(PolicyViolationError, match="No grant"):
         issuer.issue(
             iss="agent:someone-else",
             sub="tool:process_payout",
             capabilities=["tool:draft_payout"],
-            ttl_seconds=60,
+            ttl_seconds=30,
         )

@@ -8,7 +8,7 @@
 **The zero-trust authorization standard for multi-agent systems.**
 
 SwarmAuth is OAuth 2.1 for autonomous AI swarms: cryptographically signed,
-short-lived (≤300s), capability-scoped delegation tokens for agent-to-agent
+short-lived (≤30s), capability-scoped delegation tokens for agent-to-agent
 and agent-to-tool calls. It's built on one assumption you should already
 hold — your LLM layer *will* be compromised by prompt injection — and asks a
 different question: when that happens, does the execution boundary stop the
@@ -21,7 +21,7 @@ between agents. Read the full threat model and protocol details in
 UCAN, Biscuit, and macaroons are the tools for open-ended multi-hop
 attenuation. MCP authorization and agent-to-agent protocols are where
 session and transport auth are heading. SwarmAuth is the check in front of
-the tool: one Ed25519 algorithm, a 300-second ceiling the verifier enforces,
+the tool: one Ed25519 algorithm, a 30-second ceiling the verifier enforces,
 an audience bound to that tool, and call, budget, and parameter limits that
 fail closed. A worker can narrow a grant once, when the parent token names
 them. The private key and the grant policy stay in a process the model
@@ -46,7 +46,7 @@ an action with real consequences.
   authorizes (`capabilities`), against whom (`sub`), and under what limits
   (`constraints`: rate limits, call caps, budget caps, parameter
   allowlists) — never a raw, reusable key.
-- **Tokens expire in seconds.** Max TTL is 300 seconds, enforced by every
+- **Tokens expire in seconds.** Max TTL is 30 seconds (10 by default), enforced by every
   verifier regardless of what an issuer tries to claim.
 - **Zero exotic dependencies.** Ed25519 via `cryptography`, schema via
   `pydantic`. That's the whole dependency tree — `KeyRegistry` needs neither,
@@ -73,7 +73,7 @@ policy = swarmauth.IssuerPolicy([
         iss="agent:requester-01",
         sub="tool:process_payout",
         capabilities=("tool:process_payout",),
-        max_ttl_seconds=60,
+        max_ttl_seconds=30,
         max_calls=1,
         max_amount_usd=1000.0,
     )
@@ -84,7 +84,7 @@ token = issuer.issue(
     sub="tool:process_payout",
     capabilities=["tool:process_payout"],
     constraints=swarmauth.Constraints(max_calls=1, max_amount_usd=1000.0),
-    ttl_seconds=60,
+    ttl_seconds=30,
 )
 
 tracker = swarmauth.UsageTracker()
@@ -215,7 +215,7 @@ sequenceDiagram
     participant I as SwarmAuth Token Issuer
     participant B as Agent B / Tool (Capability Owner)
 
-    A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=300s)
+    A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=30s)
     I->>I: Evaluate policy — is A allowed to request these capabilities against B?
     I-->>A: Signed JSON Capability Token (JCT)
     A->>B: Tool call, with JCT attached

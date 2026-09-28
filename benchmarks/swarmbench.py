@@ -122,7 +122,7 @@ def run_protected_scenario() -> dict:
                 iss="agent:requester-01",
                 sub="tool:process_payout",
                 capabilities=("tool:draft_payout",),
-                max_ttl_seconds=60,
+                max_ttl_seconds=30,
                 max_amount_usd=1000.0,
                 max_calls=1,
             )
@@ -135,7 +135,7 @@ def run_protected_scenario() -> dict:
             sub="tool:process_payout",
             capabilities=["tool:process_payout"],
             constraints=Constraints(max_amount_usd=1000.0, max_calls=1),
-            ttl_seconds=60,
+            ttl_seconds=30,
         )
         policy_refused = False
     except PolicyViolationError:
@@ -145,7 +145,7 @@ def run_protected_scenario() -> dict:
         sub="tool:process_payout",
         capabilities=["tool:draft_payout"],  # deliberately NOT "tool:process_payout"
         constraints=Constraints(max_amount_usd=1000.0, max_calls=1),
-        ttl_seconds=60,
+        ttl_seconds=30,
     )
     tracker = UsageTracker()
 
@@ -192,7 +192,7 @@ def run_protected_scenario() -> dict:
 def measure_verification_overhead(iterations: int = 10_000) -> float:
     keypair = KeyPair.generate()
     issuer = TokenIssuer(keypair=keypair)
-    token = issuer.issue(iss="agent:bench", sub="tool:bench", capabilities=["tool:bench"], ttl_seconds=60)
+    token = issuer.issue(iss="agent:bench", sub="tool:bench", capabilities=["tool:bench"], ttl_seconds=30)
 
     start = time.perf_counter()
     for _ in range(iterations):

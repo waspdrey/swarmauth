@@ -18,7 +18,7 @@ import {
 
 export const TOKEN_TYPE = "JCT";
 export const ALG = "EdDSA";
-export const MAX_TTL_SECONDS = 300;
+export const MAX_TTL_SECONDS = 30;
 
 export interface Constraints {
   maxCalls?: number;
@@ -132,10 +132,15 @@ export interface IssueOptions {
   ttlSeconds?: number;
 }
 
-/** Create and sign a new capability token. `ttlSeconds` is clamped to MAX_TTL_SECONDS. */
+/**
+ * Create and sign a new capability token. `ttlSeconds` must be an integer from 1 to
+ * MAX_TTL_SECONDS; a larger value is rejected, never silently shortened (SPEC §3).
+ */
 export async function issue(options: IssueOptions): Promise<string> {
-  const ttlSeconds = Math.min(options.ttlSeconds ?? 60, MAX_TTL_SECONDS);
-  if (ttlSeconds <= 0) throw new RangeError("ttlSeconds must be positive");
+  const ttlSeconds = options.ttlSeconds ?? 10;
+  if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0 || ttlSeconds > MAX_TTL_SECONDS) {
+    throw new RangeError(`ttlSeconds must be an integer from 1 to ${MAX_TTL_SECONDS}`);
+  }
 
   const now = Math.floor(Date.now() / 1000);
   const claims: CapabilityClaims = {
