@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 from dataclasses import dataclass
 from typing import Union
 
@@ -26,8 +27,13 @@ def b64url_encode(data: bytes) -> str:
 
 
 def b64url_decode(data: str) -> bytes:
+    if not isinstance(data, str) or not re.fullmatch(r"[A-Za-z0-9_-]*", data) or len(data) % 4 == 1:
+        raise ValueError("Invalid base64url")
     padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + padding)
+    decoded = base64.urlsafe_b64decode(data + padding)
+    if b64url_encode(decoded) != data:
+        raise ValueError("Non-canonical base64url")
+    return decoded
 
 
 @dataclass(frozen=True)

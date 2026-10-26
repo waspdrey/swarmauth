@@ -15,10 +15,11 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Optional, TypeVar
+from typing import Any, Callable, Iterator, Optional, Sequence, TypeVar
 
 from swarmauth.crypto import KeyPair
-from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
+from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError, SwarmAuthError, TokenExpiredError
+from swarmauth.limits import RETENTION_AFTER_EXP_SECONDS
 from swarmauth.policy import IssuerPolicy
 from swarmauth.registry import KeyRegistry
 from swarmauth.revocation import RevocationStore
@@ -28,7 +29,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 # Kept past `exp` so a call accepted on the default 2-second leeway boundary
 # still sees the same usage record. Entries are then eligible for collection.
-_USAGE_RETENTION_AFTER_EXP_SECONDS = 3
+_USAGE_RETENTION_AFTER_EXP_SECONDS = RETENTION_AFTER_EXP_SECONDS
 
 _current_token: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("swarmauth_token", default=None)
 
@@ -61,6 +62,8 @@ def _validated_amount(amount: Any) -> float:
     constraint.
     """
     try:
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+            raise ValueError("boolean amount")
         parsed = float(amount)
     except (TypeError, ValueError) as exc:
         raise ConstraintViolationError(
@@ -194,39 +197,57 @@ class UsageTracker:
             del self._usage[jti]
 
     def check_and_record(self, claims: CapabilityClaims, *, amount: float = 0.0) -> None:
+        self.check_and_record_chain([claims], amount=amount)
+
+    def check_and_record_chain(self, chain: Sequence[CapabilityClaims], *, amount: float = 0.0) -> None:
+        """Reserve every allowance together, or change none of them.
+
+        The caller supplies a cryptographically verified chain (parent, child).
+        Siblings share their parent's jti even though they have distinct jtis.
+        """
+        amount = _validated_amount(amount)
+        if not chain or len({claims.jti for claims in chain}) != len(chain):
+            raise ConstraintViolationError("Delegation token IDs must be distinct", constraint="max_calls")
         with self._lock:
             now = time.time()
+            if any(now >= claims.exp + RETENTION_AFTER_EXP_SECONDS for claims in chain):
+                raise TokenExpiredError("Token expired before usage reservation")
             self._purge_expired_unlocked(now)
-            usage = self._get(claims.jti)
-            usage.expires_at = max(usage.expires_at, float(claims.exp) + _USAGE_RETENTION_AFTER_EXP_SECONDS)
-            constraints = claims.constraints
+            pending = []
+            for claims in chain:
+                usage = self._usage.get(claims.jti, _TokenUsage())
+                constraints = claims.constraints
+                recent = [t for t in usage.call_timestamps if t >= now - 60]
+                if constraints.max_calls is not None and usage.call_count + 1 > constraints.max_calls:
+                    raise ConstraintViolationError("Token call allowance exhausted", constraint="max_calls")
+                if constraints.max_amount_usd is not None and usage.spent_amount + amount > constraints.max_amount_usd:
+                    raise ConstraintViolationError("Token budget exhausted", constraint="max_amount_usd")
+                if constraints.rate_limit_per_min is not None and len(recent) + 1 > constraints.rate_limit_per_min:
+                    raise ConstraintViolationError("Token rate allowance exhausted", constraint="rate_limit_per_min")
+                pending.append((claims, usage, recent))
+            for claims, usage, recent in pending:
+                usage.call_count += 1
+                usage.spent_amount += amount
+                usage.call_timestamps = [*recent, now]
+                usage.expires_at = max(usage.expires_at, float(claims.exp) + _USAGE_RETENTION_AFTER_EXP_SECONDS)
+                self._usage[claims.jti] = usage
 
-            if constraints.max_calls is not None and usage.call_count + 1 > constraints.max_calls:
-                raise ConstraintViolationError(
-                    f"Token {claims.jti} already used {usage.call_count}/{constraints.max_calls} calls",
-                    constraint="max_calls",
-                )
 
-            if constraints.max_amount_usd is not None and usage.spent_amount + amount > constraints.max_amount_usd:
-                remaining = constraints.max_amount_usd - usage.spent_amount
-                raise ConstraintViolationError(
-                    f"Amount {amount} would exceed remaining budget ({remaining:.2f} of {constraints.max_amount_usd})",
-                    constraint="max_amount_usd",
-                )
+@dataclass(frozen=True)
+class AuthorizationEvent:
+    """Authorization decision metadata; never includes tokens or tool arguments."""
 
-            if constraints.rate_limit_per_min is not None:
-                window_start = now - 60
-                recent = [t for t in usage.call_timestamps if t >= window_start]
-                if len(recent) + 1 > constraints.rate_limit_per_min:
-                    raise ConstraintViolationError(
-                        f"Rate limit exceeded: {len(recent)}/{constraints.rate_limit_per_min} calls in last 60s",
-                        constraint="rate_limit_per_min",
-                    )
-                usage.call_timestamps = recent
+    decision: str
+    code: Optional[str]
+    issuer: Optional[str]
+    audience: Optional[str]
+    capability: Optional[str]
+    token_id: Optional[str]
 
-            usage.call_count += 1
-            usage.spent_amount += amount
-            usage.call_timestamps.append(now)
+
+def _stateful(claims: CapabilityClaims) -> list[str]:
+    return [name for name in ("max_calls", "max_amount_usd", "rate_limit_per_min")
+            if getattr(claims.constraints, name) is not None]
 
 
 def verify_and_check(
@@ -237,9 +258,10 @@ def verify_and_check(
     revocation_store: Optional[RevocationStore] = None,
     audience: Optional[str] = None,
     required_capability: Optional[str] = None,
-    amount: float = 0.0,
+    amount: Optional[float] = None,
     params: Optional[dict[str, Any]] = None,
     tracker: Optional[UsageTracker] = None,
+    on_decision: Optional[Callable[[AuthorizationEvent], None]] = None,
 ) -> CapabilityClaims:
     """Verify a token's signature/expiry/audience, check capability + constraints,
     and (if a tracker is given) atomically record usage against it.
@@ -252,38 +274,48 @@ def verify_and_check(
     it is the actual execution boundary, independent of whatever the calling
     agent's LLM decided to do.
     """
-    claims = CapabilityToken.verify(
-        token,
-        issuer_public_key=issuer_public_key,
-        key_registry=key_registry,
-        revocation_store=revocation_store,
-        audience=audience,
-    )
-
-    if required_capability is not None:
-        check_capability(claims, required_capability)
-
-    if params is not None:
-        check_params(claims, params)
-
-    stateful = [
-        name
-        for name, value in (
-            ("max_calls", claims.constraints.max_calls),
-            ("max_amount_usd", claims.constraints.max_amount_usd),
-            ("rate_limit_per_min", claims.constraints.rate_limit_per_min),
+    claims = None
+    try:
+        claims = CapabilityToken.verify(
+            token, issuer_public_key=issuer_public_key, key_registry=key_registry,
+            revocation_store=revocation_store, audience=audience,
         )
-        if value is not None
-    ]
-    if stateful and tracker is None:
-        raise ConstraintViolationError(
-            f"Token declares {', '.join(stateful)} but no usage tracker was provided",
-            constraint=stateful[0],
-        )
-
-    if tracker is not None:
-        tracker.check_and_record(claims, amount=_validated_amount(amount))
-
+        if required_capability is not None:
+            check_capability(claims, required_capability)
+        if claims.constraints.allowed_params and params is None:
+            raise ConstraintViolationError("Token pins parameters but no params were provided", constraint="allowed_params")
+        if params is not None:
+            check_params(claims, params)
+        stateful = _stateful(claims)
+        if stateful and tracker is None:
+            raise ConstraintViolationError(
+                f"Token declares {', '.join(stateful)} but no usage tracker was provided", constraint=stateful[0],
+            )
+        if claims.constraints.max_amount_usd is not None and amount is None:
+            raise ConstraintViolationError(
+                "A budgeted call requires an explicit amount or amount_kwarg", constraint="max_amount_usd",
+            )
+        resolved_amount = _validated_amount(amount) if amount is not None else 0.0
+        if tracker is not None:
+            parent = CapabilityToken.parse(claims.prf)[1] if claims.prf else None
+            if parent is not None and _stateful(parent):
+                atomic_record = getattr(tracker, "check_and_record_chain", None)
+                if not callable(atomic_record):
+                    raise ConstraintViolationError(
+                        "Delegated limits require a tracker with atomic check_and_record_chain", constraint="max_calls",
+                    )
+                atomic_record([parent, claims], amount=resolved_amount)
+            else:
+                tracker.check_and_record(claims, amount=resolved_amount)
+    except SwarmAuthError as exc:
+        if on_decision is not None:
+            on_decision(AuthorizationEvent(
+                "denied", exc.code, claims.iss if claims else None, audience,
+                required_capability, claims.jti if claims else None,
+            ))
+        raise
+    if on_decision is not None:
+        on_decision(AuthorizationEvent("allowed", None, claims.iss, claims.sub, required_capability, claims.jti))
     return claims
 
 
@@ -297,6 +329,7 @@ def guard(
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
     amount_kwarg: Optional[str] = None,
+    on_decision: Optional[Callable[[AuthorizationEvent], None]] = None,
 ) -> Callable[[F], F]:
     """Execution-boundary guard: decorate a tool function so it verifies a
     JSON Capability Token before running, e.g. `@swarmauth.guard("tool:x", ...)`.
@@ -321,16 +354,17 @@ def guard(
     def decorator(func: F) -> F:
         signature = inspect.signature(func)
 
-        @functools.wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
+        def authorize(args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
             token = kwargs.pop(token_kwarg, None) or _current_token.get()
             if not token:
+                if on_decision is not None:
+                    on_decision(AuthorizationEvent("denied", "CAPABILITY_VIOLATION", None, bound_audience, capability, None))
                 raise CapabilityViolationError(
                     f"No JCT supplied (expected kwarg '{token_kwarg}' or use_token())", required=capability
                 )
 
             params = _bound_call_params(signature, args, kwargs)
-            amount = params.get(amount_kwarg, 0.0) if amount_kwarg else 0.0
+            amount = params.get(amount_kwarg) if amount_kwarg else None
             verify_and_check(
                 token,
                 issuer_public_key=issuer_public_key,
@@ -341,7 +375,19 @@ def guard(
                 amount=amount,
                 params=params,
                 tracker=tracker,
+                on_decision=on_decision,
             )
+
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                authorize(args, kwargs)
+                return await func(*args, **kwargs)
+            return async_wrapper  # type: ignore[return-value]
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            authorize(args, kwargs)
             return func(*args, **kwargs)
 
         return wrapper  # type: ignore[return-value]
@@ -381,6 +427,7 @@ def secure_tool_call(
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
     amount_kwarg: Optional[str] = None,
+    on_decision: Optional[Callable[[AuthorizationEvent], None]] = None,
 ) -> Callable[..., Any]:
     """Framework-agnostic helper: wrap any callable (a LangChain tool's `func=`,
     a CrewAI `Tool`'s callable, an AutoGen registered function, or a plain
@@ -402,6 +449,7 @@ def secure_tool_call(
         tracker=tracker,
         token_kwarg=token_kwarg,
         amount_kwarg=amount_kwarg,
+        on_decision=on_decision,
     )(func)
 
 
@@ -410,11 +458,19 @@ def secure_langchain_tool(tool: Any, **kwargs: Any) -> Any:
     execution is gated on a valid JSON Capability Token. Duck-typed -- does not
     import langchain, so it works against any version with no hard dependency.
     """
-    if getattr(tool, "func", None) is not None:
-        tool.func = secure_tool_call(tool.func, **kwargs)
+    wrapped = False
+    for attribute in ("func", "coroutine"):
+        handler = getattr(tool, attribute, None)
+        if callable(handler):
+            setattr(tool, attribute, secure_tool_call(handler, **kwargs))
+            wrapped = True
+    if wrapped:
         return tool
     if hasattr(tool, "_run"):
         tool._run = secure_tool_call(tool._run, **kwargs)
+        # A custom asynchronous handler can bypass _run entirely.
+        if "_arun" in type(tool).__dict__:
+            tool._arun = secure_tool_call(tool._arun, **kwargs)
         return tool
     raise TypeError(f"Object {tool!r} does not look like a LangChain tool (no .func or ._run)")
 

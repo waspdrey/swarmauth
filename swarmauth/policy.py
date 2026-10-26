@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
 from swarmauth.exceptions import PolicyViolationError
-from swarmauth.token import MAX_TTL_SECONDS, Constraints, capability_covered, limit_is_wider
+from swarmauth.token import MAX_TTL_SECONDS, Constraints, capability_covered, json_value_equal, limit_is_wider
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ class Grant:
             raise ValueError(f"max_ttl_seconds must be an integer from 1 to {MAX_TTL_SECONDS}")
         if self.max_ttl_seconds <= 0 or self.max_ttl_seconds > MAX_TTL_SECONDS:
             raise ValueError(f"max_ttl_seconds must be an integer from 1 to {MAX_TTL_SECONDS}")
-        if self.max_calls is not None and (isinstance(self.max_calls, bool) or self.max_calls < 1):
+        if self.max_calls is not None and (type(self.max_calls) is not int or self.max_calls < 1):
             raise ValueError("max_calls must be >= 1 when set")
         if self.max_amount_usd is not None and (
             isinstance(self.max_amount_usd, bool)
@@ -49,7 +49,7 @@ class Grant:
         ):
             raise ValueError("max_amount_usd must be a finite number >= 0 when set")
         if self.rate_limit_per_min is not None and (
-            isinstance(self.rate_limit_per_min, bool) or self.rate_limit_per_min < 1
+            type(self.rate_limit_per_min) is not int or self.rate_limit_per_min < 1
         ):
             raise ValueError("rate_limit_per_min must be >= 1 when set")
         delegates = tuple(self.delegates)
@@ -117,7 +117,7 @@ def _grant_denies(
     if limit_is_wider(constraints.rate_limit_per_min, grant.rate_limit_per_min):
         return "rate_limit_per_min exceeds the grant ceiling"
     for key, expected in grant.pinned_params.items():
-        if constraints.allowed_params.get(key) != expected:
+        if key not in constraints.allowed_params or not json_value_equal(constraints.allowed_params[key], expected):
             return f"Issued token does not pin '{key}' to {expected!r}"
     if dlg is not None and dlg not in grant.delegates:
         return f"Grant does not allow delegation to '{dlg}'"

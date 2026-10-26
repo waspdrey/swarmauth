@@ -12,7 +12,7 @@ Requires the optional `redis` extra: `pip install swarmauth[redis]`.
 
 Design notes
 ------------
-- State is keyed by the token's `jti`, exactly like `UsageTracker`.
+- State is keyed by each token's `jti`; delegated calls reserve both parent and child atomically.
 - Redis keys are given a TTL instead of being manually cleaned up: since
   every JCT expires within `swarmauth.token.MAX_TTL_SECONDS` (30s) and a
   verifier must independently reject an expired token anyway, there is never
@@ -31,9 +31,12 @@ from __future__ import annotations
 import math
 import time
 from types import ModuleType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
-from swarmauth.exceptions import ConstraintViolationError
+from swarmauth.crypto import generate_jti
+from swarmauth.exceptions import ConstraintViolationError, TokenExpiredError
+from swarmauth.limits import RETENTION_AFTER_EXP_SECONDS
+from swarmauth.middleware import _validated_amount
 from swarmauth.token import MAX_TTL_SECONDS, CapabilityClaims
 
 if TYPE_CHECKING:
@@ -63,6 +66,8 @@ class RedisUsageTracker:
     ) -> None:
         if _redis is None:
             raise ImportError("RedisUsageTracker requires the 'redis' package: pip install swarmauth[redis]")
+        if type(key_ttl_seconds) is not int or key_ttl_seconds < 1:
+            raise ValueError("key_ttl_seconds must be a positive integer")
         self._redis = client
         self._key_prefix = key_prefix
         self._key_ttl_seconds = key_ttl_seconds
@@ -74,56 +79,45 @@ class RedisUsageTracker:
         return f"{self._key_prefix}{jti}:calls"
 
     def check_and_record(self, claims: CapabilityClaims, *, amount: float = 0.0) -> None:
-        constraints = claims.constraints
-        hash_key = self._hash_key(claims.jti)
-        zset_key = self._zset_key(claims.jti)
+        self.check_and_record_chain([claims], amount=amount)
 
-        # The `with` block's __exit__ resets the pipeline (unwatch + discard
-        # any queued commands) on any exit path, including an exception, so
-        # a ConstraintViolationError raised below never leaves a dangling
-        # WATCH or a half-built MULTI on the connection.
+    def check_and_record_chain(self, chain: Sequence[CapabilityClaims], *, amount: float = 0.0) -> None:
+        """WATCH every parent/child key; reserve all counters in one transaction."""
+        amount = _validated_amount(amount)
+        if not chain or len({claims.jti for claims in chain}) != len(chain):
+            raise ConstraintViolationError("Delegation token IDs must be distinct", constraint="max_calls")
+        keys = [(self._hash_key(claims.jti), self._zset_key(claims.jti)) for claims in chain]
         with self._redis.pipeline() as pipe:
             while True:
-                pipe.watch(hash_key, zset_key)  # type: ignore[no-untyped-call]  # redis-py's Pipeline.watch itself has no type annotations
-                now = time.time()
-
-                # Reads only, before MULTI: writing to a watched key here
-                # (even a "cleanup" write) would self-invalidate the
-                # transaction on every attempt.
-                current_calls = int(pipe.hget(hash_key, "calls") or 0)
-                current_amount = float(pipe.hget(hash_key, "amount") or 0.0)
-                recent_count = 0
-                if constraints.rate_limit_per_min is not None:
-                    recent_count = pipe.zcount(zset_key, now - 60, "+inf")
-
-                if constraints.max_calls is not None and current_calls + 1 > constraints.max_calls:
-                    raise ConstraintViolationError(
-                        f"Token {claims.jti} already used {current_calls}/{constraints.max_calls} calls",
-                        constraint="max_calls",
-                    )
-                if constraints.max_amount_usd is not None and current_amount + amount > constraints.max_amount_usd:
-                    remaining = constraints.max_amount_usd - current_amount
-                    raise ConstraintViolationError(
-                        f"Amount {amount} would exceed remaining budget ({remaining:.2f} of {constraints.max_amount_usd})",
-                        constraint="max_amount_usd",
-                    )
-                if constraints.rate_limit_per_min is not None and recent_count + 1 > constraints.rate_limit_per_min:
-                    raise ConstraintViolationError(
-                        f"Rate limit exceeded: {recent_count}/{constraints.rate_limit_per_min} calls in last 60s",
-                        constraint="rate_limit_per_min",
-                    )
-
-                pipe.multi()
-                pipe.hincrby(hash_key, "calls", 1)
-                pipe.hincrbyfloat(hash_key, "amount", amount)
-                pipe.zadd(zset_key, {f"{now!r}": now})
-                pipe.zremrangebyscore(zset_key, 0, now - 60)
-                pipe.expire(hash_key, self._key_ttl_seconds)
-                pipe.expire(zset_key, self._key_ttl_seconds)
                 try:
+                    pipe.watch(*(key for pair in keys for key in pair))  # type: ignore[no-untyped-call]
+                    now = time.time()
+                    if any(now >= claims.exp + RETENTION_AFTER_EXP_SECONDS for claims in chain):
+                        raise TokenExpiredError("Token expired before usage reservation")
+                    for claims, (hash_key, zset_key) in zip(chain, keys, strict=True):
+                        limits = claims.constraints
+                        calls = int(pipe.hget(hash_key, "calls") or 0)
+                        spent = float(pipe.hget(hash_key, "amount") or 0.0)
+                        recent = pipe.zcount(zset_key, now - 60, "+inf") if limits.rate_limit_per_min is not None else 0
+                        if limits.max_calls is not None and calls + 1 > limits.max_calls:
+                            raise ConstraintViolationError("Token call allowance exhausted", constraint="max_calls")
+                        if limits.max_amount_usd is not None and spent + amount > limits.max_amount_usd:
+                            raise ConstraintViolationError("Token budget exhausted", constraint="max_amount_usd")
+                        if limits.rate_limit_per_min is not None and recent + 1 > limits.rate_limit_per_min:
+                            raise ConstraintViolationError("Token rate allowance exhausted", constraint="rate_limit_per_min")
+                    pipe.multi()
+                    for claims, (hash_key, zset_key) in zip(chain, keys, strict=True):
+                        ttl = max(self._key_ttl_seconds, math.ceil(claims.exp + RETENTION_AFTER_EXP_SECONDS - now))
+                        pipe.hincrby(hash_key, "calls", 1)
+                        pipe.hincrbyfloat(hash_key, "amount", amount)
+                        # Unique member even when concurrent calls share the same clock tick.
+                        pipe.zadd(zset_key, {generate_jti(): now})
+                        pipe.zremrangebyscore(zset_key, "-inf", f"({now - 60}")
+                        pipe.expire(hash_key, ttl)
+                        pipe.expire(zset_key, ttl)
                     pipe.execute()
                     return
-                except _redis.WatchError:  # type: ignore[union-attr]  # non-None: __init__ already required the 'redis' package
+                except _redis.WatchError:  # type: ignore[union-attr]
                     continue
 
 
@@ -141,10 +135,22 @@ class RedisRevocationStore:
         self._key_prefix = key_prefix
 
     def revoke(self, jti: str, *, expires_at: int) -> None:
-        ttl_seconds = math.ceil(expires_at - time.time())
+        ttl_seconds = math.ceil(expires_at + RETENTION_AFTER_EXP_SECONDS - time.time())
         if ttl_seconds <= 0:
             return
-        self._redis.set(self._key(jti), "1", ex=ttl_seconds)
+        key = self._key(jti)
+        with self._redis.pipeline() as pipe:
+            while True:
+                try:
+                    pipe.watch(key)  # type: ignore[no-untyped-call]
+                    if pipe.ttl(key) >= ttl_seconds:
+                        return
+                    pipe.multi()
+                    pipe.set(key, "1", ex=ttl_seconds)
+                    pipe.execute()
+                    return
+                except _redis.WatchError:  # type: ignore[union-attr]
+                    continue
 
     def is_revoked(self, jti: str) -> bool:
         return self._redis.exists(self._key(jti)) == 1

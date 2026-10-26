@@ -117,6 +117,36 @@ calling `.func(..., token=...)` is only the direct path. The adapters are
 verified against real LangChain, ag2, and MCP installs in
 [`tests/test_framework_adapters.py`](tests/test_framework_adapters.py).
 
+## Enforcement and upgrading to 0.1.8
+
+- Delegated calls charge both the child and its parent in one atomic reservation.
+  Siblings share the parent's call, budget, and rate allowances. A rejection
+  changes neither record. Use one shared tracker across all verifiers;
+  `RedisUsageTracker` supports this across processes. Custom trackers must
+  implement `check_and_record_chain(chain, *, amount)` for bounded delegation.
+- A token with a budget requires an explicit `amount` in `verify_and_check`,
+  or `amount_kwarg` on `guard`. Zero must be supplied explicitly. A missing
+  mapping or amount fails closed. A token that pins parameters requires actual
+  `params`; missing keys and JSON boolean/number mismatches are rejected.
+- Leeway is an integer from 0 to 2 seconds. Revocations and usage records
+  survive the entire acceptance window, including the final grace second.
+- Claims are strictly validated. Numeric strings, boolean counts/timestamps,
+  non-finite amounts, missing token IDs, invalid lifetimes, and unknown
+  constraint fields are rejected. Malformed signatures remain protocol errors.
+- Async Python guards preserve coroutine handlers and authorize when awaited.
+  LangChain's separate synchronous and asynchronous handlers are both wrapped.
+
+`guard(..., on_decision=callback)` and `verify_and_check(..., on_decision=callback)`
+emit an `AuthorizationEvent`: decision, error code, verified issuer/token ID
+when available, audience, and capability. Events contain no raw tokens or tool
+arguments. The callback is synchronous; callback failures stop execution.
+An allowed event means authorization and usage reservation, not tool success.
+
+Run `python examples/marrow_procurement.py` for a procurement cell that can
+only draft a proforma. A separate approval service issues a single-use token
+bound to the distributor, order, and approval before a purchase order can be
+submitted. The example uses simulated tools and makes no external calls.
+
 ## Scaling out: many issuers and many verifier processes
 
 The examples above assume one issuer whose public key a verifier already
@@ -238,8 +268,10 @@ this one without needing to ask. This Python SDK enforces itself against
 the same file on every test run — as does [`ts/`](ts/), a TypeScript
 reference implementation with the same zero-dependency philosophy (Ed25519
 via the standard Web Crypto API, no npm crypto package required), currently
-covering the core protocol (issue/verify/parse, capability and parameter
-checks) but not yet `KeyRegistry` or `RevocationStore`.
+covering the core protocol, one-hop delegation, issuer and holder key registries,
+revocation, capability and parameter checks. The TypeScript reference does not
+provide stateful usage tracking or framework guards; use Python or the Node.js
+SDK for those execution-boundary integrations.
 
 ## SwarmBench: does this actually stop anything?
 
