@@ -24,7 +24,8 @@ const SINGLE_CHAR_ESCAPES: Record<string, string> = {
 
 function encodeString(value: string): string {
   let out = '"';
-  for (const ch of value) {
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i]!;
     const code = ch.charCodeAt(0);
     const special = SINGLE_CHAR_ESCAPES[ch];
     if (special !== undefined) {
@@ -57,7 +58,14 @@ export function canonicalJsonString(value: JsonValue): string {
   if (Array.isArray(value)) {
     return "[" + value.map(canonicalJsonString).join(",") + "]";
   }
-  const keys = Object.keys(value).sort();
+  const keys = Object.keys(value).sort((a, b) => {
+    const left = Array.from(a, (ch) => ch.codePointAt(0)!);
+    const right = Array.from(b, (ch) => ch.codePointAt(0)!);
+    for (let i = 0; i < Math.min(left.length, right.length); i++) {
+      if (left[i] !== right[i]) return left[i]! - right[i]!;
+    }
+    return left.length - right.length;
+  });
   const parts = keys.map((key) => `${encodeString(key)}:${canonicalJsonString((value as Record<string, JsonValue>)[key] as JsonValue)}`);
   return "{" + parts.join(",") + "}";
 }

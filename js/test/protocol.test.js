@@ -8,6 +8,7 @@ import {
   Grant,
   IssuerPolicy,
   KeyRegistry,
+  UsageTracker,
   attenuate,
   canonicalJson,
   checkLifetime,
@@ -154,7 +155,7 @@ test("policy, runtime token, and one-hop attenuation", () => {
   const tool = guard((args) => calls.push(args.amount), {
     capability: "tool:pay",
     registry,
-    tracker: { checkAndRecord() {} },
+    tracker: new UsageTracker(),
   });
   useToken(child, () => tool({ amount: 1 }));
   assert.deepEqual(calls, [1]);

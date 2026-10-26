@@ -12,15 +12,17 @@ required.
 
 ## Status
 
-Early. This is the core protocol only -- issue, verify, parse, capability
-and parameter checks -- validated byte-for-byte against the same
-[`spec/test-vectors/vectors.json`](../spec/test-vectors/) the Python SDK
-enforces itself against (`npm test`). **Not yet ported from the Python
-SDK:** `KeyRegistry` (multi-issuer trust + key rotation), `RevocationStore`,
-distributed usage tracking, and framework adapters. Contributions welcome;
-match the Python SDK's shape (`swarmauth/registry.py`,
-`swarmauth/revocation.py`) rather than inventing a different API surface for
-the same concept.
+Core protocol implementation: issue, verify, parse, one-hop attenuation,
+issuer/holder key registries with rotation and revocation, token revocation,
+and capability/parameter checks. It runs the same shared positive and
+adversarial vectors as Python and Node.js, including `kid` binding,
+delegation, malformed schemas, and Unicode issuance.
+
+This package does **not** provide a usage tracker, issuer policy engine,
+or framework guard. `verify` alone does not enforce call, rate, or spend
+allowances. Use the Python SDK or the Node.js `swarmauth` package for a
+complete execution-boundary integration; do not treat this core verifier
+as authorization to execute a statefully limited tool.
 
 ## Install
 
@@ -35,7 +37,7 @@ npm run build
 ## Quickstart
 
 ```typescript
-import { KeyPair, issue, verify, checkCapability } from "@swarmauth/core";
+import { KeyPair, issue, verify, checkCapability, checkParams } from "@swarmauth/core";
 
 const toolKeys = await KeyPair.generate();
 
@@ -44,7 +46,7 @@ const token = await issue({
   iss: "agent:requester-01",
   sub: "tool:process_payout",
   capabilities: ["tool:process_payout"],
-  constraints: { maxAmountUsd: 1000, allowedParams: { destination_account: "acct_1" } },
+  constraints: { allowedParams: { destination_account: "acct_1" } },
   ttlSeconds: 30,
 });
 
@@ -54,7 +56,8 @@ const claims = await verify(token, {
   issuerPublicKey: toolKeys.publicBytes,
   audience: "tool:process_payout",
 });
-checkCapability(claims, "tool:process_payout"); // throws CapabilityViolationError if not granted
+checkCapability(claims, "tool:process_payout"); // rejects a missing capability
+checkParams(claims, { destination_account: "acct_1" }); // bind actual tool arguments
 ```
 
 `issue`/`verify`/`sign` are `async` (Web Crypto's API is Promise-based);
@@ -82,12 +85,24 @@ implements this explicitly and is the piece `spec/test-vectors` most
 directly exercises. If you're porting SwarmAuth to a third language, this
 file (and matching it against the vectors) is where to start.
 
-**Known limitation:** JavaScript's `number` type doesn't distinguish
-`250.0` from `250` the way Python's `float`/`int` do, so a constraint value
-that's a whole-number float (e.g. `max_amount_usd: 250.0`) will canonicalize
-as `250`, not `250.0`, diverging from the Python SDK's output for that
-specific value. Not exercised by the current vectors (which use `250.5`);
-avoid whole-number floats in cross-checked fixtures until this is resolved.
+Whole-number `maxAmountUsd` values are encoded as floats (e.g. `250.0`) to
+match Python. Unicode is escaped by UTF-16 code unit and keys are sorted by
+Unicode code point, including astral characters. Shared vectors test both
+verification and byte-exact issuance.
+
+## Delegation and revocation
+
+`KeyRegistry.register(issuer, publicKey, { rotate: true })` retains old keys
+through rotation; `registerHolder` authorizes a worker only to sign children.
+Pass `keyRegistry` instead of `issuerPublicKey` to `verify` for delegation.
+Use `attenuate({ issuerKeyPair, parent, iss, capabilities, constraints,
+ttlSeconds })` to issue one narrower child. Verification checks both keys,
+parent revocation, unchanged audience and pins, and narrower limits.
+
+`InMemoryRevocationStore.revoke(jti, { expiresAt })` retains revocations
+through the two-second grace period. Pass `revocationStore` to `verify`.
+Custom stores may return a boolean or Promise<boolean> from `isRevoked`.
+Leeway must be an integer from 0 to 2 seconds.
 
 ## Testing
 

@@ -15,6 +15,8 @@ import {
   AudienceMismatchError,
   CapabilityViolationError,
   ConstraintViolationError,
+  DelegationError,
+  KeyRegistry,
   InvalidSignatureError,
   KeyPair,
   MalformedTokenError,
@@ -44,6 +46,7 @@ const ERROR_CODE_TO_CLASS: Record<string, new (message: string) => Error> = {
   AUDIENCE_MISMATCH: AudienceMismatchError,
   CAPABILITY_VIOLATION: CapabilityViolationError,
   CONSTRAINT_VIOLATION: ConstraintViolationError,
+  DELEGATION_VIOLATION: DelegationError,
 };
 
 test("vectors.json has the expected shape", () => {
@@ -75,11 +78,17 @@ for (const vector of vectorsData.vectors as Array<Record<string, unknown>>) {
     if (vector.claims) {
       const claims = vector.claims as { iat: number };
       t.mock.timers.enable({ apis: ["Date"] });
-      t.mock.timers.setTime((claims.iat + 10) * 1000);
+      t.mock.timers.setTime((typeof claims.iat === "number" && Number.isSafeInteger(claims.iat) ? claims.iat + 10 : 1700000010) * 1000);
     }
 
+    const registry = new KeyRegistry();
+    if (vector.delegate_public_key_hex) {
+      registry.register(vector.root_iss as string, issuerPublicKey);
+      registry.registerHolder(vector.delegate_iss as string, hexToBytes(vector.delegate_public_key_hex as string));
+    }
+    const trust = vector.delegate_public_key_hex ? { keyRegistry: registry } : { issuerPublicKey };
     if (vector.valid) {
-      const claims = await verify(token, { issuerPublicKey });
+      const claims = await verify(token, trust);
       const expected = vector.claims as Record<string, unknown>;
       assert.equal(claims.iss, expected.iss);
       assert.equal(claims.jti, expected.jti);
@@ -87,7 +96,7 @@ for (const vector of vectorsData.vectors as Array<Record<string, unknown>>) {
     } else {
       const ExpectedError = ERROR_CODE_TO_CLASS[vector.error_code as string];
       assert.ok(ExpectedError, `no TS class mapped for error_code ${vector.error_code}`);
-      await assert.rejects(() => verify(token, { issuerPublicKey }), ExpectedError);
+      await assert.rejects(() => verify(token, trust), ExpectedError);
     }
   });
 }
@@ -129,4 +138,48 @@ test("issue rejects a ttl above MAX_TTL_SECONDS instead of shortening it, and de
   assert.equal(claims.exp - claims.iat, 10);
   const atCeiling = await verify(await issue({ ...base, ttlSeconds: MAX_TTL_SECONDS }), { issuerPublicKey: kp.publicBytes });
   assert.equal(atCeiling.exp - atCeiling.iat, MAX_TTL_SECONDS);
+});
+
+// Build the positive Unicode fixture as well as verifying it: this catches
+// incorrect surrogate-pair escaping and integer-vs-float budget formatting.
+test("Unicode and whole-dollar issuance matches Python bytes", async () => {
+  const vector = vectorsData.vectors.find((item: { name: string }) => item.name === "unicode_and_nested_pins");
+  const keyPair = await KeyPair.fromPrivateBytes(hexToBytes(vectorsData.issuer_private_key_seed_hex));
+  const { parse } = await import("../src/index.js");
+  const claims = parse(vector.token).claims;
+  assert.equal(await buildToken(keyPair, claims), vector.token);
+});
+
+test("registry rotation and revocation apply to parent and holder keys", async () => {
+  const { attenuate, InMemoryRevocationStore, parse } = await import("../src/index.js");
+  const root = await KeyPair.generate();
+  const worker = await KeyPair.generate();
+  const registry = new KeyRegistry();
+  registry.register("root", root.publicBytes);
+  registry.registerHolder("worker", worker.publicBytes);
+  const parent = await issue({ issuerKeyPair: root, iss: "root", sub: "tool:x", capabilities: ["tool:x"], dlg: "worker", ttlSeconds: 30 });
+  const child = await attenuate({ issuerKeyPair: worker, parent, iss: "worker", capabilities: ["tool:x"], ttlSeconds: 20 });
+  assert.equal((await verify(child, { keyRegistry: registry })).iss, "worker");
+  const store = new InMemoryRevocationStore();
+  const parentClaims = parse(parent).claims;
+  store.revoke(parentClaims.jti, { expiresAt: parentClaims.exp });
+  await assert.rejects(() => verify(child, { keyRegistry: registry, revocationStore: store }), TokenRevokedError);
+  registry.revokeHolder("worker", worker.publicBytes);
+  await assert.rejects(() => verify(child, { keyRegistry: registry }), UnknownIssuerError);
+});
+
+test("a delegable root cannot be presented as an execution credential", async () => {
+  const root = await KeyPair.generate();
+  const token = await issue({ issuerKeyPair: root, iss: "root", sub: "tool:x", capabilities: ["tool:x"], dlg: "worker" });
+  await assert.rejects(() => verify(token, { issuerPublicKey: root.publicBytes }), DelegationError);
+});
+
+test("parameter comparison is structural and does not conflate missing values", async () => {
+  const { checkParams, parse } = await import("../src/index.js");
+  const root = await KeyPair.generate();
+  const token = await issue({ issuerKeyPair: root, iss: "root", sub: "tool:x", capabilities: ["tool:x"],
+    constraints: { allowedParams: { approved: true, optional: null, order: { a: 1, b: 2 } } } });
+  const claims = parse(token).claims;
+  assert.throws(() => checkParams(claims, { approved: 1 }), ConstraintViolationError);
+  checkParams(claims, { approved: true, optional: null, order: { b: 2, a: 1 } });
 });

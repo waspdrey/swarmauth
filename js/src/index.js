@@ -6,6 +6,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createPrivateKey, createPublicKey, randomBytes, sign, verify as verifyEd25519 } from "node:crypto";
 
 export const MAX_TTL_SECONDS = 30;
+export const MAX_LEEWAY_SECONDS = 2;
+export const RETENTION_AFTER_EXP_SECONDS = MAX_LEEWAY_SECONDS + 1;
 const TOKEN_TYPE = "JCT";
 const ALG = "EdDSA";
 const PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -30,8 +32,12 @@ export function b64urlEncode(data) {
 }
 
 export function b64urlDecode(text) {
-  const pad = text.length % 4 === 0 ? "" : "=".repeat(4 - (text.length % 4));
-  return Buffer.from(text + pad, "base64url");
+  if (typeof text !== "string" || !/^[A-Za-z0-9_-]*$/.test(text) || text.length % 4 === 1) {
+    fail("MALFORMED_TOKEN", "Invalid base64url");
+  }
+  const bytes = Buffer.from(text, "base64url");
+  if (b64urlEncode(bytes) !== text) fail("MALFORMED_TOKEN", "Non-canonical base64url");
+  return bytes;
 }
 
 function formatAmount(value) {
@@ -40,9 +46,23 @@ function formatAmount(value) {
   return JSON.stringify(value);
 }
 
+function encodeString(value) {
+  return JSON.stringify(value).replace(/[\u007f-\uffff]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
+function compareKeys(a, b) {
+  const left = Array.from(a, (ch) => ch.codePointAt(0));
+  const right = Array.from(b, (ch) => ch.codePointAt(0));
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    if (left[i] !== right[i]) return left[i] - right[i];
+  }
+  return left.length - right.length;
+}
+
 function encode(value) {
   if (value === null) return "null";
-  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "string") return encodeString(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") {
     if (!Number.isFinite(value)) fail("MALFORMED_TOKEN", "non-finite number in claims");
     if (Number.isInteger(value)) return String(value);
@@ -50,8 +70,8 @@ function encode(value) {
   }
   if (Array.isArray(value)) return `[${value.map(encode).join(",")}]`;
   if (typeof value === "object") {
-    const keys = Object.keys(value).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${encode(value[key])}`).join(",")}}`;
+    const keys = Object.keys(value).sort(compareKeys);
+    return `{${keys.map((key) => `${encodeString(key)}:${encode(value[key])}`).join(",")}}`;
   }
   fail("MALFORMED_TOKEN", "unsupported JSON value");
 }
@@ -120,7 +140,7 @@ function signToken(seed, claims) {
 export function issue({ privateKey, iss, sub, capabilities, constraints, ttlSeconds = 10, dlg, iat, exp, jti }) {
   const seed = Buffer.from(privateKey);
   if (seed.length !== 32) throw new Error("privateKey must be a 32-byte Ed25519 seed");
-  if (iat == null) requireTtl(ttlSeconds);
+  requireTtl(ttlSeconds);
   const now = iat ?? Math.floor(Date.now() / 1000);
   const claims = {
     iss,
@@ -132,6 +152,7 @@ export function issue({ privateKey, iss, sub, capabilities, constraints, ttlSeco
     jti: jti ?? b64urlEncode(randomBytes(16)),
   };
   if (dlg) claims.dlg = dlg;
+  validateClaims({ ...claims, constraints: constraints ?? {} });
   return signToken(seed, claims);
 }
 
@@ -144,22 +165,64 @@ function emptyConstraints(constraints = {}) {
   };
 }
 
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validJson(value) {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value) && (!Number.isInteger(value) || Number.isSafeInteger(value));
+  if (Array.isArray(value)) return value.every(validJson);
+  return isObject(value) && Object.values(value).every(validJson);
+}
+
+function validateClaims(claims) {
+  const fields = new Set(["iss", "sub", "capabilities", "constraints", "iat", "exp", "jti", "dlg", "prf"]);
+  if (!isObject(claims) || Object.keys(claims).some((key) => !fields.has(key)) ||
+      !["iss", "sub", "jti"].every((key) => typeof claims[key] === "string" && claims[key].length > 0) ||
+      !Array.isArray(claims.capabilities) || claims.capabilities.length === 0 ||
+      !claims.capabilities.every((item) => typeof item === "string" && item.length > 0) ||
+      !Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp) || claims.exp <= claims.iat) {
+    fail("MALFORMED_TOKEN", "Invalid claims schema");
+  }
+  for (const key of ["dlg", "prf"]) {
+    if (claims[key] != null && (typeof claims[key] !== "string" || claims[key].length === 0)) {
+      fail("MALFORMED_TOKEN", `Invalid ${key}`);
+    }
+  }
+  if (claims.constraints === null) fail("MALFORMED_TOKEN", "Invalid constraints");
+  const limits = claims.constraints ?? {};
+  const names = new Set(["max_calls", "max_amount_usd", "rate_limit_per_min", "allowed_params"]);
+  if (!isObject(limits) || Object.keys(limits).some((key) => !names.has(key))) fail("MALFORMED_TOKEN", "Invalid constraints");
+  for (const key of ["max_calls", "rate_limit_per_min"]) {
+    if (limits[key] != null && (!Number.isSafeInteger(limits[key]) || limits[key] < 1)) {
+      fail("MALFORMED_TOKEN", `Invalid ${key}`);
+    }
+  }
+  if (limits.max_amount_usd != null && (typeof limits.max_amount_usd !== "number" ||
+      !Number.isFinite(limits.max_amount_usd) || limits.max_amount_usd < 0)) fail("MALFORMED_TOKEN", "Invalid budget");
+  if (Object.hasOwn(limits, "allowed_params") && (!isObject(limits.allowed_params) || !validJson(limits.allowed_params))) {
+    fail("MALFORMED_TOKEN", "Invalid allowed_params");
+  }
+}
+
 export function parse(token) {
+  if (typeof token !== "string") fail("MALFORMED_TOKEN", "Token must be a string");
   const parts = token.split(".");
-  if (parts.length !== 3) fail("MALFORMED_TOKEN", `Expected 3 dot-separated parts, got ${parts.length}`);
+  if (parts.length !== 3 || parts.some((part) => !part)) fail("MALFORMED_TOKEN", "Expected 3 non-empty segments");
   let header;
   let claims;
   try {
-    header = JSON.parse(b64urlDecode(parts[0]).toString("utf8"));
-    claims = JSON.parse(b64urlDecode(parts[1]).toString("utf8"));
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    header = JSON.parse(decoder.decode(b64urlDecode(parts[0])));
+    claims = JSON.parse(decoder.decode(b64urlDecode(parts[1])));
+    b64urlDecode(parts[2]);
   } catch {
-    fail("MALFORMED_TOKEN", "Token header/payload is not valid base64url JSON");
+    fail("MALFORMED_TOKEN", "Token is not valid base64url JSON");
   }
-  if (header.typ !== TOKEN_TYPE || header.alg !== ALG) fail("MALFORMED_TOKEN", "Unsupported token header");
-  if (!claims.iss || !claims.sub || !Array.isArray(claims.capabilities) || claims.capabilities.length === 0) {
-    fail("MALFORMED_TOKEN", "Invalid claims schema");
-  }
-  return { header, claims, signingInput: `${parts[0]}.${parts[1]}` };
+  if (!isObject(header) || header.typ !== TOKEN_TYPE || header.alg !== ALG) fail("MALFORMED_TOKEN", "Unsupported token header");
+  validateClaims(claims);
+  return { header, claims: { ...claims, constraints: emptyConstraints(claims.constraints) }, signingInput: `${parts[0]}.${parts[1]}` };
 }
 
 function kidBytes(header) {
@@ -199,6 +262,10 @@ function verifyKidAndSignature(header, claims, signingInput, signature, { public
 }
 
 export function checkLifetime({ iat, exp, leewaySeconds = 2, now }) {
+  if (!Number.isSafeInteger(iat) || !Number.isSafeInteger(exp) || exp <= iat) fail("MALFORMED_TOKEN", "Invalid lifetime");
+  if (!Number.isInteger(leewaySeconds) || leewaySeconds < 0 || leewaySeconds > MAX_LEEWAY_SECONDS || !Number.isFinite(now)) {
+    throw new RangeError("Invalid clock or leeway (must be 0..2 seconds)");
+  }
   if (exp - iat > MAX_TTL_SECONDS) fail("TOKEN_EXPIRED", `Token TTL ${exp - iat}s exceeds max ${MAX_TTL_SECONDS}s`);
   if (now < iat - leewaySeconds) fail("TOKEN_NOT_YET_VALID", `Token not valid until ${iat}`);
   if (now > exp + leewaySeconds) fail("TOKEN_EXPIRED", `Token expired at ${exp}`);
@@ -229,6 +296,7 @@ function assertAttenuated(parent, child) {
   if (!parent.dlg || parent.dlg !== child.iss) {
     fail("DELEGATION_VIOLATION", `Parent token does not authorize '${child.iss}' to attenuate it`);
   }
+  if (child.jti === parent.jti) fail("DELEGATION_VIOLATION", "Parent and child token IDs must differ");
   if (child.dlg) fail("DELEGATION_VIOLATION", "An attenuated token cannot itself be delegated further");
   if (child.sub !== parent.sub) fail("DELEGATION_VIOLATION", "Attenuated token retargets audience");
   if (child.iat < parent.iat || child.exp > parent.exp) {
@@ -247,7 +315,7 @@ function assertAttenuated(parent, child) {
     }
   }
   for (const [key, expected] of Object.entries(parentConstraints.allowed_params ?? {})) {
-    if ((childConstraints.allowed_params ?? {})[key] !== expected) {
+    if (!Object.hasOwn(childConstraints.allowed_params ?? {}, key) || !jsonEqual(childConstraints.allowed_params[key], expected)) {
       fail("DELEGATION_VIOLATION", `Attenuated token drops or changes pinned parameter '${key}'`);
     }
   }
@@ -340,7 +408,9 @@ export class Grant {
     this.rateLimitPerMin = fields.rateLimitPerMin ?? null;
     this.delegates = [...(fields.delegates ?? [])];
     this.pinnedParams = { ...(fields.pinnedParams ?? {}) };
-    if (!this.iss || !this.sub || this.capabilities.length === 0) throw new Error("Grant requires iss, sub, and capabilities");
+    validateClaims({ iss: this.iss, sub: this.sub, capabilities: this.capabilities, iat: 0, exp: 1, jti: "grant",
+      constraints: { max_calls: this.maxCalls, max_amount_usd: this.maxAmountUsd,
+        rate_limit_per_min: this.rateLimitPerMin, allowed_params: this.pinnedParams } });
     if (!Number.isInteger(this.maxTtlSeconds) || this.maxTtlSeconds <= 0 || this.maxTtlSeconds > MAX_TTL_SECONDS) {
       throw new Error(`maxTtlSeconds must be an integer from 1 to ${MAX_TTL_SECONDS}`);
     }
@@ -353,6 +423,7 @@ export class IssuerPolicy {
   }
 
   check({ iss, sub, capabilities, constraints = {}, ttlSeconds, dlg }) {
+    requireTtl(ttlSeconds);
     const candidates = this.grants.filter((grant) => grant.iss === iss && grant.sub === sub);
     if (!candidates.length) fail("POLICY_VIOLATION", `No grant allows '${iss}' to issue tokens for '${sub}'`);
     const reasons = [];
@@ -376,30 +447,115 @@ function grantDenies(grant, { capabilities, constraints, ttlSeconds, dlg }) {
   if (limitIsWider(constraints.max_amount_usd, grant.maxAmountUsd)) return "max_amount_usd exceeds the grant ceiling";
   if (limitIsWider(constraints.rate_limit_per_min, grant.rateLimitPerMin)) return "rate_limit_per_min exceeds the grant ceiling";
   for (const [key, expected] of Object.entries(grant.pinnedParams)) {
-    if ((constraints.allowed_params ?? {})[key] !== expected) return `Issued token does not pin '${key}'`;
+    if (!Object.hasOwn(constraints.allowed_params ?? {}, key) || !jsonEqual(constraints.allowed_params[key], expected)) return `Issued token does not pin '${key}'`;
   }
   if (dlg != null && !grant.delegates.includes(dlg)) return `Grant does not allow delegation to '${dlg}'`;
   return null;
 }
 
-export function verifyAndCheck(token, options = {}) {
-  const claims = verify(token, options);
-  if (options.requiredCapability && !capabilityCovered(options.requiredCapability, claims.capabilities)) {
-    fail("CAPABILITY_VIOLATION", `Token does not grant capability '${options.requiredCapability}'`);
+function jsonEqual(left, right) {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((item, index) => jsonEqual(item, right[index]));
   }
-  const allowed = claims.constraints?.allowed_params ?? {};
-  if (options.params) {
+  if (isObject(left) && isObject(right)) {
+    return Object.keys(left).length === Object.keys(right).length &&
+      Object.keys(left).every((key) => Object.hasOwn(right, key) && jsonEqual(left[key], right[key]));
+  }
+  return false;
+}
+
+function validatedAmount(amount) {
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) {
+    fail("CONSTRAINT_VIOLATION", "Amount must be a finite, non-negative number");
+  }
+  return amount;
+}
+
+function stateful(claims) {
+  return ["max_calls", "max_amount_usd", "rate_limit_per_min"].filter((key) => claims.constraints[key] != null);
+}
+
+function synchronous(result) {
+  if (result && typeof result.then === "function") {
+    throw new TypeError("SwarmAuth requires synchronous tracker and decision callbacks");
+  }
+}
+
+export class UsageTracker {
+  constructor() { this.usage = new Map(); }
+  checkAndRecord(claims, amount = 0) { this.checkAndRecordChain([claims], amount); }
+  checkAndRecordChain(chain, amount = 0) {
+    validatedAmount(amount);
+    if (!chain.length || new Set(chain.map((claims) => claims.jti)).size !== chain.length) {
+      fail("CONSTRAINT_VIOLATION", "Delegation token IDs must be distinct");
+    }
+    const now = Date.now() / 1000;
+    if (chain.some((claims) => now >= claims.exp + RETENTION_AFTER_EXP_SECONDS)) fail("TOKEN_EXPIRED", "Token expired before usage reservation");
+    for (const [id, entry] of this.usage) if (entry.expiresAt <= now) this.usage.delete(id);
+    const pending = chain.map((claims) => {
+      const previous = this.usage.get(claims.jti) ?? { calls: 0, amount: 0, timestamps: [], expiresAt: 0 };
+      const timestamps = previous.timestamps.filter((time) => time >= now - 60);
+      const limits = claims.constraints;
+      if (limits.max_calls != null && previous.calls + 1 > limits.max_calls) fail("CONSTRAINT_VIOLATION", "Token call allowance exhausted");
+      if (limits.max_amount_usd != null && previous.amount + amount > limits.max_amount_usd) fail("CONSTRAINT_VIOLATION", "Token budget exhausted");
+      if (limits.rate_limit_per_min != null && timestamps.length + 1 > limits.rate_limit_per_min) fail("CONSTRAINT_VIOLATION", "Token rate allowance exhausted");
+      return [claims.jti, { calls: previous.calls + 1, amount: previous.amount + amount,
+        timestamps: [...timestamps, now], expiresAt: Math.max(previous.expiresAt, claims.exp + RETENTION_AFTER_EXP_SECONDS) }];
+    });
+    for (const [id, entry] of pending) this.usage.set(id, entry);
+  }
+}
+
+export class InMemoryRevocationStore {
+  constructor() { this.revoked = new Map(); }
+  purge() {
+    const now = Date.now() / 1000;
+    for (const [id, until] of this.revoked) if (until <= now) this.revoked.delete(id);
+  }
+  revoke(jti, { expiresAt }) {
+    this.purge();
+    const until = expiresAt + RETENTION_AFTER_EXP_SECONDS;
+    if (until > Date.now() / 1000) this.revoked.set(jti, Math.max(until, this.revoked.get(jti) ?? 0));
+  }
+  isRevoked(jti) { this.purge(); return this.revoked.has(jti); }
+}
+
+export function verifyAndCheck(token, options = {}) {
+  let claims;
+  try {
+    claims = verify(token, options);
+    if (options.requiredCapability && !capabilityCovered(options.requiredCapability, claims.capabilities)) {
+      fail("CAPABILITY_VIOLATION", `Token does not grant capability '${options.requiredCapability}'`);
+    }
+    const allowed = claims.constraints.allowed_params;
+    if (Object.keys(allowed).length && options.params == null) fail("CONSTRAINT_VIOLATION", "Token pins parameters but params are missing");
     for (const [key, expected] of Object.entries(allowed)) {
-      if (options.params[key] !== expected) {
+      if (!Object.hasOwn(options.params ?? {}, key) || !jsonEqual(options.params[key], expected)) {
         fail("CONSTRAINT_VIOLATION", `Parameter '${key}' does not match required value`);
       }
     }
+    if (stateful(claims).length && !options.tracker) fail("CONSTRAINT_VIOLATION", "Token limits require a usage tracker");
+    if (claims.constraints.max_amount_usd != null && options.amount == null) {
+      fail("CONSTRAINT_VIOLATION", "A budgeted call requires an explicit amount or amountArg");
+    }
+    const amount = options.amount == null ? 0 : validatedAmount(options.amount);
+    if (options.tracker) {
+      const parent = claims.prf ? parse(claims.prf).claims : null;
+      if (parent && stateful(parent).length) {
+        if (typeof options.tracker.checkAndRecordChain !== "function") fail("CONSTRAINT_VIOLATION", "Delegated limits require atomic checkAndRecordChain");
+        synchronous(options.tracker.checkAndRecordChain([parent, claims], amount));
+      } else synchronous(options.tracker.checkAndRecord(claims, amount));
+    }
+  } catch (error) {
+    if (error instanceof SwarmAuthError && options.onDecision) synchronous(options.onDecision({
+      decision: "denied", code: error.code, issuer: claims?.iss ?? null, audience: options.audience ?? null,
+      capability: options.requiredCapability ?? null, tokenId: claims?.jti ?? null,
+    }));
+    throw error;
   }
-  const stateful = ["max_calls", "max_amount_usd", "rate_limit_per_min"].filter((name) => claims.constraints?.[name] != null);
-  if (stateful.length && !options.tracker) {
-    fail("CONSTRAINT_VIOLATION", `Token declares ${stateful.join(", ")} but no usage tracker was provided`);
-  }
-  options.tracker?.checkAndRecord(claims, options.amount ?? 0);
+  if (options.onDecision) synchronous(options.onDecision({ decision: "allowed", code: null,
+    issuer: claims.iss, audience: claims.sub, capability: options.requiredCapability ?? null, tokenId: claims.jti }));
   return claims;
 }
 
@@ -416,17 +572,23 @@ export function guard(fn, options) {
   const audience = options.audience ?? options.capability;
   return (args = {}) => {
     const token = args.token || currentToken();
-    if (!token) fail("CAPABILITY_VIOLATION", "No JCT supplied");
+    if (!token) {
+      if (options.onDecision) synchronous(options.onDecision({ decision: "denied", code: "CAPABILITY_VIOLATION",
+        issuer: null, audience, capability: options.capability, tokenId: null }));
+      fail("CAPABILITY_VIOLATION", "No JCT supplied");
+    }
     const params = { ...args };
     delete params.token;
     verifyAndCheck(token, {
       publicKey: options.publicKey,
       registry: options.registry,
+      revocationStore: options.revocationStore,
+      onDecision: options.onDecision,
       audience,
       requiredCapability: options.capability,
       params,
       tracker: options.tracker,
-      amount: options.amountArg ? params[options.amountArg] : 0,
+      amount: options.amountArg ? params[options.amountArg] : undefined,
       now: options.now,
     });
     return fn(params);

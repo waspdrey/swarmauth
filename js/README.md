@@ -21,7 +21,7 @@ import { randomBytes } from "node:crypto";
 import {
   Grant,
   IssuerPolicy,
-  SwarmAuthError,
+  UsageTracker,
   guard,
   issue,
   publicKeyFromSeed,
@@ -53,21 +53,7 @@ const policy = new IssuerPolicy([
 policy.check(request);
 const token = issue({ privateKey, ...request });
 
-const usage = new Map();
-const tracker = {
-  checkAndRecord(claims, amount = 0) {
-    const state = usage.get(claims.jti) ?? { calls: 0, amount: 0 };
-    const calls = state.calls + 1;
-    const spent = state.amount + amount;
-    if (claims.constraints.max_calls != null && calls > claims.constraints.max_calls) {
-      throw new SwarmAuthError("CONSTRAINT_VIOLATION", "max_calls exceeded");
-    }
-    if (claims.constraints.max_amount_usd != null && spent > claims.constraints.max_amount_usd) {
-      throw new SwarmAuthError("CONSTRAINT_VIOLATION", "max_amount_usd exceeded");
-    }
-    usage.set(claims.jti, { calls, amount: spent });
-  },
-};
+const tracker = new UsageTracker();
 
 const processPayout = guard(
   ({ destinationAccount, amountUsd }) => ({ destinationAccount, amountUsd, status: "sent" }),
@@ -84,7 +70,14 @@ const receipt = useToken(token, () =>
 );
 ```
 
-`guard` binds the audience to the capability string. Pass `audience` when the token's `sub` is different. A token that sets `max_calls`, `max_amount_usd`, or `rate_limit_per_min` is rejected when `tracker` is omitted. The tracker above is the smallest counter that enforces those two ceilings. Share one tracker across every verifier that must see the same usage.
+`guard` binds the audience to the capability string. Pass `audience` when the token's `sub` is different. A token that sets `max_calls`, `max_amount_usd`, or `rate_limit_per_min` is rejected when `tracker` is omitted. `UsageTracker` enforces all three limits in one Node.js process, purges expired
+records, and atomically charges both parent and child on delegated calls.
+For multiple processes, provide a shared synchronous backend implementing
+`checkAndRecord(claims, amount)` and `checkAndRecordChain(chain, amount)`;
+a child-only tracker is rejected when the parent has limits.
+A budget requires `amountArg` (or an explicit `amount` in `verifyAndCheck`).
+Missing amounts and pinned parameters fail closed. Explicit zero is valid.
+
 
 Wire-format constraint fields stay snake_case (`max_calls`, `max_amount_usd`, `rate_limit_per_min`, `allowed_params`). Grant fields on `Grant` are camelCase (`maxCalls`, `maxAmountUsd`, `maxTtlSeconds`).
 
@@ -136,3 +129,21 @@ Failures throw `SwarmAuthError`. `error.code` is one of:
 ## Protocol
 
 Claim layout, canonical JSON, and verification order are specified in [SPEC.md](https://github.com/waspdrey/swarmauth/blob/main/SPEC.md). The Python SDK is [swarmauth on PyPI](https://pypi.org/project/swarmauth/).
+
+## Revocation and decision events
+
+`InMemoryRevocationStore` exposes `revoke(jti, { expiresAt })` and
+`isRevoked(jti)`. Pass `revocationStore` to `verify`, `verifyAndCheck`, or
+`guard`. Revocations survive the entire expiry grace window (maximum two
+seconds of verifier leeway, including its final accepted second).
+
+`guard` and `verifyAndCheck` accept `onDecision(event)`. The synchronous
+callback receives `{ decision, code, issuer, audience, capability, tokenId }`,
+with no raw token or tool arguments. An allowed event records authorization,
+not successful execution. Throwing in the callback prevents tool execution.
+Trackers and callbacks must be synchronous; async results are rejected.
+
+Claims use strict JSON types; malformed lifetimes and unknown constraints
+are rejected. Parameter pins use structural JSON equality, with booleans
+kept distinct from numbers. Unicode (including emoji) and whole-dollar
+budgets are covered by shared byte-exact Python/JS/TS fixtures.
