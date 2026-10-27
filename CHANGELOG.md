@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security fixes and release preparation (0.1.8)
+
+- Parent call, budget, and rate allowances are shared by all delegated children;
+  memory and Redis trackers reserve parent/child usage atomically.
+- Missing amount mappings and pinned parameters fail closed; pins use structural
+  JSON equality and distinguish missing/null and booleans/numbers.
+- Revocations persist through the whole expiry grace period. JavaScript guards
+  forward revocation stores, and verifier leeway is bounded to 0..2 seconds.
+- Strict claims, constraint, timestamp, base64url, and token-ID validation across
+  all SDKs. TypeScript verifies `kid`, supports one-hop delegation, registries,
+  and revocation. Expanded shared Unicode and adversarial fixtures.
+- Async Python handlers preserve coroutine semantics; both LangChain handlers
+  are guarded. Optional structured decision callbacks omit tokens/arguments.
+- Added a Marrow procurement approval-boundary example.
+- Release workflows require CI; CI tests built wheels outside the checkout.
+  PyPI accepts `PYPI_API_TOKEN`; npm retains `NPM_TOKEN`. No credentials are
+  committed, and this change does not publish a release.
+
+
 ### Changed
 
 - **Breaking: the token lifetime ceiling is now 30 seconds, down from 300.**

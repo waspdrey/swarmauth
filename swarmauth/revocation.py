@@ -12,6 +12,8 @@ import threading
 import time
 from typing import Protocol
 
+from swarmauth.limits import RETENTION_AFTER_EXP_SECONDS
+
 
 class RevocationStore(Protocol):
     """Storage boundary for token IDs revoked through their expiry time."""
@@ -41,11 +43,12 @@ class InMemoryRevocationStore:
 
     def revoke(self, jti: str, *, expires_at: int) -> None:
         now = time.time()
+        retained_until = expires_at + RETENTION_AFTER_EXP_SECONDS
         with self._lock:
             self._purge_expired_unlocked(now)
-            if expires_at <= now:
+            if retained_until <= now:
                 return
-            self._revoked[jti] = max(expires_at, self._revoked.get(jti, 0))
+            self._revoked[jti] = max(retained_until, self._revoked.get(jti, 0))
 
     def is_revoked(self, jti: str) -> bool:
         now = time.time()

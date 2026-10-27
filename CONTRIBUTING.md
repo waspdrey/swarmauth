@@ -173,3 +173,23 @@ without the API-stability guarantee `1.0.0` will carry.
 
 See [SECURITY.md](SECURITY.md) — please don't open a public issue for a
 suspected security vulnerability in the protocol or SDK.
+
+## Release credentials and validation
+
+The next prepared Python/Node.js version is 0.1.8. Add `PYPI_API_TOKEN`
+(as a repository secret, or in the `pypi` environment) and `NPM_TOKEN`
+(as a repository secret). PyPI's token may be scoped to the existing project;
+without it, the workflow falls back to configured trusted publishing.
+Never commit either credential. The TypeScript package remains a local
+reference implementation and is not published by these workflows.
+
+Both release workflows call the full CI workflow before publishing. CI also
+builds a wheel and runs `scripts/verify_release_artifact.py` from outside the
+source checkout. Keep shared vectors reproducible with
+`python scripts/generate_test_vectors.py`; CI rejects uncommitted drift.
+For the live Redis suite, run both `tests/test_redis_backend.py` and
+`tests/test_enforcement.py` against a disposable database.
+
+Publishing remains triggered by a published GitHub release. Adding secrets
+alone does not publish or rerun a failed release. Merge the reviewed change,
+then publish the matching version tag when ready.

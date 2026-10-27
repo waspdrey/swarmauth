@@ -14,12 +14,16 @@ export function b64urlEncode(data: Uint8Array): string {
 }
 
 export function b64urlDecode(data: string): Uint8Array {
+  if (typeof data !== "string" || !/^[A-Za-z0-9_-]*$/.test(data) || data.length % 4 === 1) throw new TypeError("Invalid base64url");
   const padded = data.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (data.length % 4)) % 4);
   if (typeof Buffer !== "undefined") {
-    return new Uint8Array(Buffer.from(padded, "base64"));
+    const bytes = new Uint8Array(Buffer.from(padded, "base64"));
+    if (b64urlEncode(bytes) !== data) throw new TypeError("Non-canonical base64url");
+    return bytes;
   }
   const binary = atob(padded);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  if (b64urlEncode(out) !== data) throw new TypeError("Non-canonical base64url");
   return out;
 }

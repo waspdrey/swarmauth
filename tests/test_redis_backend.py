@@ -185,7 +185,7 @@ def test_revocation_store_skips_writing_an_already_expired_revocation(redis_clie
 def test_revocation_store_key_gets_a_ttl_matching_the_signed_expiry(redis_client):
     store = RedisRevocationStore(redis_client)
     store.revoke("jti-1", expires_at=int(time.time()) + 60)
-    assert 0 < redis_client.ttl("swarmauth:revoked:jti-1") <= 60
+    assert 0 < redis_client.ttl("swarmauth:revoked:jti-1") <= 63
 
 
 def test_revocation_store_is_shared_across_independent_clients(redis_client, fake_server):
@@ -194,3 +194,30 @@ def test_revocation_store_is_shared_across_independent_clients(redis_client, fak
 
     other_store = RedisRevocationStore(_second_client(fake_server))
     assert other_store.is_revoked("jti-1") is True
+
+
+def test_same_clock_tick_does_not_merge_rate_limit_calls(redis_client, monkeypatch):
+    now = time.time()
+    claims = _issue_and_parse(Constraints(rate_limit_per_min=2))
+    tracker = RedisUsageTracker(redis_client)
+    monkeypatch.setattr(time, "time", lambda: now)
+    tracker.check_and_record(claims)
+    tracker.check_and_record(claims)
+    assert redis_client.zcard(f"swarmauth:usage:{claims.jti}:calls") == 2
+    with pytest.raises(ConstraintViolationError):
+        tracker.check_and_record(claims)
+
+
+def test_custom_short_ttl_cannot_reset_usage_before_token_expiry(redis_client):
+    claims = _issue_and_parse(Constraints(max_calls=1))
+    tracker = RedisUsageTracker(redis_client, key_ttl_seconds=1)
+    tracker.check_and_record(claims)
+    assert redis_client.ttl(f"swarmauth:usage:{claims.jti}") >= claims.exp - int(time.time()) + 2
+
+
+def test_shorter_re_revocation_cannot_clear_an_existing_revocation(redis_client):
+    store = RedisRevocationStore(redis_client)
+    store.revoke("same-id", expires_at=int(time.time()) + 30)
+    first_ttl = redis_client.ttl("swarmauth:revoked:same-id")
+    store.revoke("same-id", expires_at=int(time.time()) + 1)
+    assert redis_client.ttl("swarmauth:revoked:same-id") >= first_ttl - 1

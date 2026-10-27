@@ -27,7 +27,7 @@ from swarmauth.middleware import (
     secure_langchain_tool,
     secure_mcp_tool,
 )
-from swarmauth.token import Constraints
+from swarmauth.token import CapabilityToken, Constraints
 
 langchain_core = pytest.importorskip("langchain_core", reason="pip install -e '.[dev]' to run framework adapter tests")
 ag2 = pytest.importorskip("ag2", reason="pip install -e '.[dev]' to run framework adapter tests")
@@ -238,3 +238,27 @@ def test_secure_mcp_tool_executes_with_valid_token():
 
     token = issuer.issue(iss="agent:a", sub="tool:process_payout", capabilities=["tool:process_payout"])
     assert guarded(destination_account="acct_1", amount_usd=5.0, token=token) == "sent 5.0 to acct_1"
+
+
+def test_langchain_async_handler_cannot_bypass_guard():
+    import asyncio
+    import inspect
+    from langchain_core.tools import StructuredTool
+    from swarmauth.middleware import secure_langchain_tool, use_token
+
+    keys = KeyPair.generate()
+    token = CapabilityToken.issue(issuer_keypair=keys, iss="a", sub="tool:echo", capabilities=["tool:echo"])
+    def echo(value: str) -> str:
+        """Echo a value."""
+        return value
+    async def async_echo(value: str) -> str:
+        return value
+    tool = StructuredTool.from_function(func=echo, coroutine=async_echo)
+    secure_langchain_tool(tool, capability="tool:echo", issuer_public_key=keys.public_bytes)
+    assert inspect.iscoroutinefunction(tool.coroutine)
+    async def run():
+        with pytest.raises(CapabilityViolationError):
+            await tool.ainvoke({"value": "blocked"})
+        with use_token(token):
+            assert await tool.ainvoke({"value": "allowed"}) == "allowed"
+    asyncio.run(run())
