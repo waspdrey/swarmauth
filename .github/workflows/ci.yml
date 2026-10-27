@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
@@ -31,6 +32,11 @@ jobs:
       - name: pip-audit (known vulnerabilities in resolved dependencies)
         run: python scripts/audit_deps.py
 
+      - name: Verify committed protocol vectors are reproducible
+        run: |
+          python scripts/generate_test_vectors.py
+          git diff --exit-code -- spec/test-vectors/vectors.json
+
       - name: Version sync (pyproject.toml must match swarmauth/__init__.py)
         run: |
           python -c "
@@ -39,6 +45,10 @@ jobs:
           init_version = re.search(r'__version__ = \"([^\"]+)\"', open('swarmauth/__init__.py').read()).group(1)
           if pyproject_version != init_version:
               sys.exit(f'version mismatch: pyproject.toml={pyproject_version!r} swarmauth/__init__.py={init_version!r}')
+          import json
+          js_version = json.load(open('js/package.json'))['version']
+          if js_version != pyproject_version:
+              sys.exit(f'JavaScript version mismatch: {js_version} != {pyproject_version}')
           print(f'versions match: {pyproject_version}')
           "
 
@@ -65,6 +75,9 @@ jobs:
 
       - name: Run execution-boundary example
         run: python examples/execution_boundary.py
+
+      - name: Run Marrow procurement example
+        run: python examples/marrow_procurement.py
 
       - name: Run SwarmBench (smoke test)
         run: python benchmarks/swarmbench.py
@@ -140,7 +153,7 @@ jobs:
       - name: Run Redis backend tests against a real Redis server
         env:
           SWARMAUTH_TEST_REDIS_URL: redis://localhost:6379/0
-        run: pytest -v tests/test_redis_backend.py
+        run: pytest -v tests/test_redis_backend.py tests/test_enforcement.py
 
   javascript:
     runs-on: ubuntu-latest
@@ -155,3 +168,17 @@ jobs:
       - name: Test the JavaScript SDK against spec/test-vectors
         working-directory: js
         run: npm test
+
+  release-artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build distribution artifacts
+        run: |
+          pip install build
+          python -m build
+      - name: Test the installed wheel outside the checkout
+        run: python scripts/verify_release_artifact.py

@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 
 from swarmauth.crypto import KeyPair, b64url_encode
-from swarmauth.exceptions import DelegationError, InvalidSignatureError
+from swarmauth.exceptions import DelegationError, InvalidSignatureError, MalformedTokenError
 from swarmauth.registry import KeyRegistry
 from swarmauth.token import ALG, TOKEN_TYPE, CapabilityClaims, CapabilityToken, Constraints, _canonical_json, claims_wire_dict
 
@@ -363,6 +363,64 @@ def main() -> None:
             "delegate_public_key_hex": delegate.public_bytes.hex(),
         }
     )
+
+    # Shared positive and adversarial fixtures. Invalid claims are signed
+    # directly so issuer-side validation cannot hide verifier-side failures.
+    base = claims_wire_dict(CapabilityClaims(
+        iss="agent:requester-01", sub="tool:process_payout", capabilities=["tool:process_payout"],
+        iat=FIXED_IAT, exp=FIXED_IAT + 30, jti="vector-schema",
+    ))
+    cases = [
+        ("unicode_and_nested_pins", True, {"iss": "agent:accra-\u00e9-\U0001f41d", "constraints": {
+            "allowed_params": {"label": "\u00e9\U0001f41d", "approved": True, "nested": {"optional": None},
+                               "\ue000": "bmp", "\U00010000": "astral"},
+            "max_calls": None, "max_amount_usd": 100.0, "rate_limit_per_min": None,
+        }}),
+        ("string_iat", False, {"iat": "not-a-timestamp"}),
+        ("string_exp", False, {"exp": "not-a-timestamp"}),
+        ("boolean_iat", False, {"iat": True}),
+        ("fractional_iat", False, {"iat": FIXED_IAT + 0.5}),
+        ("inverted_lifetime", False, {"exp": FIXED_IAT - 1}),
+        ("zero_lifetime", False, {"exp": FIXED_IAT}),
+        ("empty_jti", False, {"jti": ""}),
+        ("empty_capability", False, {"capabilities": [""]}),
+        ("boolean_max_calls", False, {"constraints": {"max_calls": True}}),
+        ("fractional_max_calls", False, {"constraints": {"max_calls": 1.5}}),
+        ("negative_budget", False, {"constraints": {"max_amount_usd": -1}}),
+        ("unknown_constraint", False, {"constraints": {"max_callz": 1}}),
+        ("null_constraints", False, {"constraints": None}),
+        ("null_allowed_params", False, {"constraints": {"allowed_params": None}}),
+        ("unsafe_parameter_integer", False, {"constraints": {"allowed_params": {"id": 2**53}}}),
+        ("unsafe_timestamp", False, {"iat": 2**53, "exp": 2**53 + 10}),
+    ]
+    for name, valid, overrides in cases:
+        payload = {**base, **overrides}
+        header = {"alg": ALG, "typ": TOKEN_TYPE, "kid": keypair.public_key_id}
+        signing_input = f"{b64url_encode(_canonical_json(header))}.{b64url_encode(_canonical_json(payload))}"
+        token = f"{signing_input}.{b64url_encode(keypair.sign(signing_input.encode('ascii')))}"
+        if valid:
+            _verify_at(FIXED_IAT + 10, token, issuer_public_key=keypair.public_bytes)
+        else:
+            try:
+                _verify_at(FIXED_IAT + 10, token, issuer_public_key=keypair.public_bytes)
+                raise AssertionError(f"Malformed vector accepted: {name}")
+            except MalformedTokenError:
+                pass
+        vectors.append({"name": name, "valid": valid, "description": "Schema and Unicode regression fixture.",
+                        **({} if valid else {"error_code": "MALFORMED_TOKEN"}),
+                        "header": header, "claims": payload, "signing_input": signing_input, "token": token})
+
+    missing_id = dict(base)
+    missing_id.pop("jti")
+    signing_input = f"{b64url_encode(_canonical_json(header))}.{b64url_encode(_canonical_json(missing_id))}"
+    missing_token = f"{signing_input}.{b64url_encode(keypair.sign(signing_input.encode('ascii')))}"
+    try:
+        _verify_at(FIXED_IAT + 10, missing_token, issuer_public_key=keypair.public_bytes)
+        raise AssertionError("Missing token ID was accepted")
+    except MalformedTokenError:
+        pass
+    vectors.append({"name": "missing_jti", "valid": False, "error_code": "MALFORMED_TOKEN",
+                    "header": header, "claims": missing_id, "signing_input": signing_input, "token": missing_token})
 
     # -- temporal test cases: pure data, no signed token -----------------------
     # `vectors` above prove signature/canonicalization correctness but, since

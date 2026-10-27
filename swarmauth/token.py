@@ -15,7 +15,7 @@ import math
 import time
 from typing import Any, Optional, Sequence
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from swarmauth.crypto import KeyPair, b64url_decode, b64url_encode, generate_jti, verify_signature
 from swarmauth.exceptions import (
@@ -29,25 +29,26 @@ from swarmauth.exceptions import (
     TokenNotYetValidError,
     TokenRevokedError,
 )
+from swarmauth.limits import MAX_LEEWAY_SECONDS
+from swarmauth.limits import MAX_TTL_SECONDS as MAX_TTL_SECONDS
 from swarmauth.registry import KeyRegistry
 from swarmauth.revocation import RevocationStore
 
 TOKEN_TYPE = "JCT"  # JSON Capability Token
 ALG = "EdDSA"
-MAX_TTL_SECONDS = 30  # hard ceiling; enforced independent of caller input
 
 
 class Constraints(BaseModel):
     """Optional runtime limits scoped to a single token."""
 
     max_calls: Optional[int] = Field(
-        default=None, ge=1, description="Max number of times this token may authorize an action."
+        default=None, ge=1, le=2**53 - 1, description="Max number of times this token may authorize an action."
     )
     max_amount_usd: Optional[float] = Field(
         default=None, ge=0, description="Max cumulative monetary amount this token may authorize."
     )
     rate_limit_per_min: Optional[int] = Field(
-        default=None, ge=1, description="Max invocations per 60s sliding window."
+        default=None, ge=1, le=2**53 - 1, description="Max invocations per 60s sliding window."
     )
     allowed_params: dict[str, Any] = Field(
         default_factory=dict,
@@ -55,23 +56,40 @@ class Constraints(BaseModel):
         "e.g. {'destination_account': 'acct_123'}.",
     )
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "strict": True, "allow_inf_nan": False}
+
+    @field_validator("allowed_params")
+    @classmethod
+    def _json_params(cls, value: dict[str, Any]) -> dict[str, Any]:
+        def valid(item: Any) -> bool:
+            if item is None or isinstance(item, (str, bool)):
+                return True
+            if isinstance(item, int):
+                return abs(item) <= 2**53 - 1
+            if isinstance(item, float):
+                return math.isfinite(item) and (not item.is_integer() or abs(item) <= 2**53 - 1)
+            if isinstance(item, list):
+                return all(valid(entry) for entry in item)
+            return isinstance(item, dict) and all(isinstance(key, str) and valid(entry) for key, entry in item.items())
+        if not valid(value):
+            raise ValueError("allowed_params must contain finite JSON values and safe integers")
+        return value
 
 
 class CapabilityClaims(BaseModel):
     """The signed payload of a Capability Token."""
 
-    iss: str = Field(..., description="Issuer agent ID, e.g. 'agent:requester-01'.")
+    iss: str = Field(..., min_length=1, description="Issuer agent ID, e.g. 'agent:requester-01'.")
     sub: str = Field(
-        ..., description="Target agent/tool ID this token authorizes calling into, e.g. 'tool:process_payout'."
+        ..., min_length=1, description="Target agent/tool ID this token authorizes calling into, e.g. 'tool:process_payout'."
     )
     capabilities: list[str] = Field(
         ..., min_length=1, description="Capabilities granted, e.g. ['tool:read_invoice']."
     )
     constraints: Constraints = Field(default_factory=Constraints)
-    iat: int = Field(..., description="Issued-at, unix seconds.")
-    exp: int = Field(..., description="Expiry, unix seconds. Must satisfy exp - iat <= 30.")
-    jti: str = Field(default_factory=generate_jti, description="Unique token ID, for usage/replay tracking.")
+    iat: int = Field(..., ge=-(2**53 - 1), le=2**53 - 1, description="Issued-at, unix seconds.")
+    exp: int = Field(..., ge=-(2**53 - 1), le=2**53 - 1, description="Expiry, unix seconds. Must satisfy exp - iat <= 30.")
+    jti: str = Field(default_factory=generate_jti, min_length=1, description="Unique token ID, for usage/replay tracking.")
     dlg: Optional[str] = Field(
         default=None,
         description="Agent id allowed to mint one narrower child token. A token with dlg set is not an execution credential.",
@@ -81,7 +99,13 @@ class CapabilityClaims(BaseModel):
         description="Parent JCT this token attenuates. Present only on a single-hop delegated token.",
     )
 
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "strict": True}
+
+    @model_validator(mode="after")
+    def _lifetime_order(self) -> CapabilityClaims:
+        if self.exp <= self.iat:
+            raise ValueError("exp must be greater than iat")
+        return self
 
     @field_validator("capabilities")
     @classmethod
@@ -114,7 +138,7 @@ def claims_wire_dict(claims: CapabilityClaims) -> dict[str, Any]:
 
 def _canonical_json(obj: dict[str, Any]) -> bytes:
     """Deterministic encoding used for both signing and verification."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")
 
 
 def capability_covered(capability: str, granted: Sequence[str]) -> bool:
@@ -213,6 +237,8 @@ def _verify_core(
     leeway_seconds: int,
     holder: bool = False,
 ) -> CapabilityClaims:
+    if type(leeway_seconds) is not int or not 0 <= leeway_seconds <= MAX_LEEWAY_SECONDS:
+        raise ValueError(f"leeway_seconds must be an integer from 0 to {MAX_LEEWAY_SECONDS}")
     if (issuer_public_key is None) == (key_registry is None):
         raise ValueError("Pass exactly one of issuer_public_key or key_registry")
 
@@ -251,11 +277,13 @@ def _assert_constraints_not_wider(parent: Constraints, child: Constraints) -> No
         if limit_is_wider(child_limit, parent_limit):
             raise DelegationError(f"Attenuated {name} widens the parent limit")
     for key, expected in parent.allowed_params.items():
-        if child.allowed_params.get(key) != expected:
+        if key not in child.allowed_params or not json_value_equal(child.allowed_params[key], expected):
             raise DelegationError(f"Attenuated token drops or changes pinned parameter '{key}'")
 
 
 def _assert_attenuated(parent: CapabilityClaims, child: CapabilityClaims) -> None:
+    if parent.jti == child.jti:
+        raise DelegationError("Parent and child token IDs must differ")
     if parent.prf:
         raise DelegationError("Only one delegation hop is allowed")
     if not parent.dlg or parent.dlg != child.iss:
@@ -309,6 +337,8 @@ class CapabilityToken:
     @staticmethod
     def parse(token: str) -> tuple[dict[str, Any], CapabilityClaims, bytes]:
         """Decode a token WITHOUT verifying its signature. Returns (header, claims, signing_input)."""
+        if not isinstance(token, str):
+            raise MalformedTokenError("Token must be a string")
         parts = token.split(".")
         if len(parts) != 3:
             raise MalformedTokenError(f"Expected 3 dot-separated parts, got {len(parts)}")
@@ -316,13 +346,16 @@ class CapabilityToken:
         try:
             header = json.loads(b64url_decode(header_b64))
             payload = json.loads(b64url_decode(payload_b64))
+            b64url_decode(sig_b64)
         except (ValueError, UnicodeDecodeError) as exc:
             raise MalformedTokenError("Token header/payload is not valid base64url JSON") from exc
 
-        if header.get("typ") != TOKEN_TYPE or header.get("alg") != ALG:
+        if not isinstance(header, dict) or header.get("typ") != TOKEN_TYPE or header.get("alg") != ALG:
             raise MalformedTokenError(f"Unsupported token header: {header}")
 
         try:
+            if not isinstance(payload, dict) or "jti" not in payload:
+                raise ValueError("Token payload must include jti")
             claims = CapabilityClaims.model_validate(payload)
         except Exception as exc:  # pydantic.ValidationError
             raise MalformedTokenError(f"Invalid claims schema: {exc}") from exc
@@ -452,8 +485,19 @@ def check_params(claims: CapabilityClaims, params: dict[str, Any]) -> None:
     """Enforce the constraints.allowed_params exact-match allowlist, if present."""
     allowed = claims.constraints.allowed_params
     for key, expected in allowed.items():
-        if params.get(key) != expected:
+        if key not in params or not json_value_equal(params[key], expected):
             raise ConstraintViolationError(
                 f"Parameter '{key}'={params.get(key)!r} does not match required value {expected!r}",
                 constraint="allowed_params",
             )
+
+
+def json_value_equal(left: Any, right: Any) -> bool:
+    """Structural JSON equality, without Python's True == 1 coercion."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(json_value_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(json_value_equal(a, b) for a, b in zip(left, right, strict=True))
+    return bool(left == right)

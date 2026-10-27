@@ -26,10 +26,13 @@ def test_in_memory_store_treats_already_expired_revocation_as_a_no_op():
     assert store.is_revoked("jti-1") is False
 
 
-def test_in_memory_store_forgets_a_revocation_once_its_expiry_passes():
+def test_in_memory_store_retains_revocation_through_leeway(monkeypatch):
+    monkeypatch.setattr(time, "time", lambda: 1000)
     store = InMemoryRevocationStore()
-    store.revoke("jti-1", expires_at=int(time.time()) + 1)
-    time.sleep(1.5)
+    store.revoke("jti-1", expires_at=1010)
+    monkeypatch.setattr(time, "time", lambda: 1012.9)
+    assert store.is_revoked("jti-1") is True
+    monkeypatch.setattr(time, "time", lambda: 1013)
     assert store.is_revoked("jti-1") is False
 
 
