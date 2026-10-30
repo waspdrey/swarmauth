@@ -57,17 +57,20 @@ test("parameter pins require presence, matching JSON types, and structural equal
 });
 
 test("guard forwards revocations and keeps them throughout the grace period", (t) => {
-  t.mock.timers.enable({ apis: ["Date"], now: 1000000 });
+  let clock = 1000000;
+  // Node 18's experimental timer mocks cannot replace Date. Only Date.now
+  // is used by the SDK, so mock that method across every supported runtime.
+  t.mock.method(Date, "now", () => clock);
   const token = mint();
   const claims = parse(token).claims;
   const store = new InMemoryRevocationStore();
   store.revoke(claims.jti, { expiresAt: claims.exp });
   const tool = guard(() => assert.fail("revoked tool executed"), { capability: "tool:pay", publicKey, revocationStore: store });
   for (const now of [1000000, (claims.exp + 1) * 1000, (claims.exp + 2) * 1000 + 999]) {
-    t.mock.timers.setTime(now);
+    clock = now;
     assert.throws(() => tool({ token }), (error) => error.code === "TOKEN_REVOKED");
   }
-  t.mock.timers.setTime((claims.exp + 3) * 1000);
+  clock = (claims.exp + 3) * 1000;
   assert.equal(store.isRevoked(claims.jti), false);
 });
 

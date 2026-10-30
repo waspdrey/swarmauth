@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed the revocation grace-period test's Node 18 compatibility by mocking
+  Date.now directly instead of requiring the newer MockTimers Date API.
+
 ### Production enforcement and shared budgets
 
 - Fixed inherited LangChain asynchronous handlers bypassing authorization;
