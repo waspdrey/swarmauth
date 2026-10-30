@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#fafbfc" />
+    <meta
+      name="description"
+      content="SwarmAuth is open-source authorization for AI agents. Verify signed, short-lived capability tokens before tools execute. Explicit permissions, delegation, and shared budgets."
+    />
+    <meta property="og:type" content="website" />
+    <meta
+      property="og:title"
+      content="SwarmAuth — Agents act. You set the limits."
+    />
+    <meta
+      property="og:description"
+      content="Open-source authorization at the point of execution. Signed capabilities, short-lived access, and enforceable limits for autonomous agents."
+    />
+    <meta property="og:url" content="https://waspdrey.github.io/swarmauth/" />
+    <meta property="og:image" content="https://waspdrey.github.io/swarmauth/assets/site-preview.jpg" />
+    <meta property="og:image:alt" content="SwarmAuth homepage with an interactive authorization example" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <title>SwarmAuth — Authorization for autonomous agents</title>
+    <link rel="canonical" href="https://waspdrey.github.io/swarmauth/" />
+    <link rel="icon" href="data:," />
+    <link
+      rel="preload"
+      href="assets/fonts/dm-sans-regular.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="assets/fonts/space-grotesk-medium.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="assets/site.css" />
+    <script src="assets/site.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="container nav-shell">
+        <a class="wordmark" href="#" aria-label="SwarmAuth home"
+          >Swarm<span>Auth</span
+          ><span class="wordmark-period" aria-hidden="true">.</span></a
+        >
+        <nav id="main-nav" class="main-nav" aria-label="Main navigation">
+          <a href="#why">Why SwarmAuth</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#developers">Developers</a>
+          <a class="nav-github" href="https://github.com/waspdrey/swarmauth"
+            >View on GitHub <span aria-hidden="true">↗</span></a
+          >
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero container" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="eyebrow-mark" aria-hidden="true"></span> Open-source
+            authorization for AI agents
+          </p>
+          <h1 id="hero-title">
+            Agents act.<br /><span>You set the limits.</span>
+          </h1>
+          <p class="hero-description">
+            Give autonomous agents specific permissions. SwarmAuth verifies
+            signed, short-lived capability tokens before a tool executes.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button button-primary"
+              href="https://github.com/waspdrey/swarmauth#quickstart"
+              >Start building <span aria-hidden="true">↗</span></a
+            >
+            <a class="button button-secondary" href="#how-it-works"
+              >How it works <span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <div class="install-command">
+            <span class="command-dollar" aria-hidden="true">$</span>
+            <code id="install-command">pip install swarmauth</code>
+            <button
+              class="copy-button"
+              data-copy="install-command"
+              aria-label="Copy Python install command"
+            >
+              Copy
+            </button>
+          </div>
+          <p class="hero-note">
+            MIT licensed. Self-hostable. Built to sit at your tool boundary.
+          </p>
+        </div>
+
+        <div
+          class="boundary-demo"
+          id="boundary-demo"
+          aria-label="Interactive authorization example"
+        >
+          <div class="demo-header">
+            <span class="demo-title">The execution boundary</span
+            ><span class="demo-label">Interactive example</span>
+          </div>
+          <div class="grant-header">
+            <span>ISSUED PERMISSION</span><span class="grant-id">JCT / 01</span>
+          </div>
+          <dl class="grant-details">
+            <div>
+              <dt>Audience</dt>
+              <dd>tool:draft_proforma</dd>
+            </div>
+            <div>
+              <dt>Capability</dt>
+              <dd>tool:draft_proforma</dd>
+            </div>
+            <div class="grant-limits">
+              <dt>Limits</dt>
+              <dd><span>10-second lifetime</span><span>1 call</span></dd>
+            </div>
+          </dl>
+          <div class="demo-request">
+            <p class="demo-step-label">TRY A TOOL REQUEST</p>
+            <div
+              class="scenario-controls"
+              role="group"
+              aria-label="Authorization scenarios"
+            >
+              <button
+                type="button"
+                class="scenario-button active"
+                data-scenario="allowed"
+                aria-pressed="true"
+              >
+                Draft an order
+              </button>
+              <button
+                type="button"
+                class="scenario-button"
+                data-scenario="wrong-tool"
+                aria-pressed="false"
+              >
+                Submit an order
+              </button>
+              <button
+                type="button"
+                class="scenario-button"
+                data-scenario="replay"
+                aria-pressed="false"
+              >
+                Replay the token
+              </button>
+            </div>
+            <div class="request-line">
+              <span>Requested</span
+              ><code id="requested-action">tool:draft_proforma</code>
+            </div>
+          </div>
+          <div
+            class="decision-panel"
+            id="decision-panel"
+            data-decision="allowed"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            <div class="decision-topline">
+              <span class="decision-indicator" aria-hidden="true"></span
+              ><strong id="decision-title">Permission granted</strong
+              ><code id="decision-code">ALLOWED</code>
+            </div>
+            <p id="decision-description">
+              The audience and capability match. One call is available.
+            </p>
+            <div class="decision-checks" id="decision-checks">
+              <span>Audience matched</span><span>Capability granted</span
+              ><span>Within call limit</span>
+            </div>
+          </div>
+          <p class="demo-footnote">
+            Illustrative checks in your browser. No tokens are signed and no
+            tools run.
+          </p>
+          <noscript
+            ><p class="demo-noscript">
+              Enable JavaScript to compare the three request scenarios.
+            </p></noscript
+          >
+        </div>
+      </section>
+
+      <div class="facts-band">
+        <dl class="container facts-grid">
+          <div>
+            <dt>Ed25519</dt>
+            <dd>Cryptographic signatures</dd>
+          </div>
+          <div>
+            <dt>≤ 30 seconds</dt>
+            <dd>Maximum token lifetime</dd>
+          </div>
+          <div>
+            <dt>One-hop delegation</dt>
+            <dd>Permissions only get narrower</dd>
+          </div>
+          <div>
+            <dt>Open source</dt>
+            <dd>MIT licensed, inspectable code</dd>
+          </div>
+        </dl>
+      </div>
+
+      <section
+        class="section container problem-section"
+        id="why"
+        aria-labelledby="problem-title"
+      >
+        <div class="section-intro">
+          <p class="eyebrow">01 / THE PROBLEM</p>
+          <h2 id="problem-title">
+            A model’s decision<br />isn’t authorization.
+          </h2>
+          <p>
+            Agents read emails, browse pages, and respond to other agents. Those
+            inputs can contain instructions you never intended to authorize.
+          </p>
+          <p>
+            SwarmAuth puts a verifiable permission check where a decision
+            becomes an action: the tool itself.
+          </p>
+          <a
+            class="text-link"
+            href="https://github.com/waspdrey/swarmauth/blob/main/SPEC.md#2-threat-model"
+            >Read the threat model <span aria-hidden="true">↗</span></a
+          >
+        </div>
+        <div class="problem-comparison">
+          <article class="comparison-row">
+            <div class="comparison-label">
+              <span class="comparison-number">01</span> The risky default
+            </div>
+            <h3>The agent asks. The tool trusts.</h3>
+            <p>
+              A compromised agent reaches a powerful tool with shared
+              credentials. The model’s request becomes the permission.
+            </p>
+            <div class="comparison-detail">
+              <span>Model decision</span><span aria-hidden="true">→</span
+              ><span>Tool execution</span>
+            </div>
+          </article>
+          <article class="comparison-row comparison-protected">
+            <div class="comparison-label">
+              <span class="comparison-number">02</span> With SwarmAuth
+            </div>
+            <h3>The agent asks. The tool verifies.</h3>
+            <p>
+              The tool checks the trusted issuer, audience, capability, expiry,
+              and configured limits before any side effect.
+            </p>
+            <div class="comparison-detail">
+              <span>Model decision</span><span aria-hidden="true">→</span
+              ><strong>Permission check</strong><span aria-hidden="true">→</span
+              ><span>Execution</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section
+        class="how-section"
+        id="how-it-works"
+        aria-labelledby="how-title"
+      >
+        <div class="container">
+          <div class="section-heading-row">
+            <div>
+              <p class="eyebrow">02 / THE MECHANISM</p>
+              <h2 id="how-title">Explicit authority.<br />At every handoff.</h2>
+            </div>
+            <p class="section-side-note">
+              A compact protocol between the issuer,<br />your runtime, and the
+              receiving tool.
+            </p>
+          </div>
+          <ol class="flow-grid">
+            <li>
+              <div class="flow-top">
+                <span class="step-number">01</span
+                ><span class="flow-category">ISSUER</span>
+              </div>
+              <h3>Define the grant.</h3>
+              <p>
+                A trusted service decides which tool an agent may call, with
+                specific capabilities and limits.
+              </p>
+              <code>policy → scoped permission</code>
+            </li>
+            <li>
+              <div class="flow-top">
+                <span class="step-number">02</span
+                ><span class="flow-category">RUNTIME</span>
+              </div>
+              <h3>Attach the token.</h3>
+              <p>
+                Your runtime supplies a signed token when invoking the tool.
+                Signing keys and grant policy stay outside the model.
+              </p>
+              <code>signed JCT · expires in seconds</code>
+            </li>
+            <li>
+              <div class="flow-top">
+                <span class="step-number">03</span
+                ><span class="flow-category">TOOL</span>
+              </div>
+              <h3>Verify, then execute.</h3>
+              <p>
+                The receiving tool checks the permission and atomically reserves
+                configured usage before running.
+              </p>
+              <code>allow within scope · reject otherwise</code>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section
+        class="section container controls-section"
+        aria-labelledby="controls-title"
+      >
+        <div class="controls-heading">
+          <p class="eyebrow">03 / THE CONTROLS</p>
+          <h2 id="controls-title">
+            A permission has<br />more than an on switch.
+          </h2>
+          <p>
+            Control what an agent can do, where it can do it, and how much
+            authority it can use.
+          </p>
+        </div>
+        <div class="control-list">
+          <article>
+            <span class="control-index">01</span>
+            <div>
+              <h3>Scope the action.</h3>
+              <p>
+                Bind tokens to a recipient and capability. Pin sensitive
+                arguments such as the order or destination account.
+              </p>
+            </div>
+            <span class="control-tag">Capabilities</span>
+          </article>
+          <article>
+            <span class="control-index">02</span>
+            <div>
+              <h3>Keep delegation narrow.</h3>
+              <p>
+                Let a named worker narrow a grant once. Children share their
+                parent’s limits and cannot expand its authority.
+              </p>
+            </div>
+            <span class="control-tag">Delegation</span>
+          </article>
+          <article>
+            <span class="control-index">03</span>
+            <div>
+              <h3>Put a ceiling on the task.</h3>
+              <p>
+                Share call and currency budgets across fresh tokens and verifier
+                processes with atomic Redis accounting.
+              </p>
+            </div>
+            <span class="control-tag">Budgets</span>
+          </article>
+          <article>
+            <span class="control-index">04</span>
+            <div>
+              <h3>Make approval specific.</h3>
+              <p>
+                Authorize an exact resource revision and request. A single-use
+                approval cannot be replayed with a fresh token.
+              </p>
+            </div>
+            <span class="control-tag">Approvals</span>
+          </article>
+        </div>
+        <p class="source-note">
+          Shared currency budgets and approval helpers are available in the
+          current source. Check release notes for published package support.
+        </p>
+      </section>
+
+      <section
+        class="developer-section"
+        id="developers"
+        aria-labelledby="developer-title"
+      >
+        <div class="container developer-grid">
+          <div class="developer-copy">
+            <p class="eyebrow">04 / FOR BUILDERS</p>
+            <h2 id="developer-title">
+              Keep your agents.<br />Guard their tools.
+            </h2>
+            <p>
+              Wrap the execution boundary in your existing stack. SwarmAuth
+              supplies the authorization check; your application owns the tool
+              and its business logic.
+            </p>
+            <div class="sdk-list">
+              <div>
+                <strong>Python</strong><span>SDK · sync / async · Redis</span>
+              </div>
+              <div>
+                <strong>Node.js</strong
+                ><span>SDK · TypeScript types · async Redis</span>
+              </div>
+              <div>
+                <strong>Go</strong><span>Verifier · HTTP enforcement</span>
+              </div>
+            </div>
+            <p class="framework-note">
+              Adapters for LangChain, CrewAI, AutoGen, and MCP.
+            </p>
+            <a
+              class="text-link text-link-light"
+              href="https://github.com/waspdrey/swarmauth/blob/main/examples/execution_boundary.py"
+              >Open the complete example <span aria-hidden="true">↗</span></a
+            >
+          </div>
+          <div class="code-window">
+            <div class="code-toolbar">
+              <div
+                class="code-tabs"
+                role="tablist"
+                aria-label="SDK example language"
+              >
+                <button
+                  type="button"
+                  id="tab-python"
+                  role="tab"
+                  data-language="python"
+                  aria-controls="panel-python"
+                  aria-selected="true"
+                  tabindex="0"
+                >
+                  Python</button
+                ><button
+                  type="button"
+                  id="tab-node"
+                  role="tab"
+                  data-language="node"
+                  aria-controls="panel-node"
+                  aria-selected="false"
+                  tabindex="-1"
+                >
+                  Node.js
+                </button>
+              </div>
+              <button
+                type="button"
+                class="copy-button code-copy"
+                data-copy="example-python"
+                aria-label="Copy SDK example"
+              >
+                Copy code
+              </button>
+            </div>
+            <div
+              id="panel-python"
+              role="tabpanel"
+              aria-labelledby="tab-python"
+              tabindex="0"
+            >
+              <pre><code id="example-python"><span class="syntax-purple">from</span> swarmauth <span class="syntax-purple">import</span> guard, UsageTracker, use_token
+
+<span class="syntax-muted"># The issuer signs a policy-scoped token.</span>
+<span class="syntax-blue">@guard</span>(
+    <span class="syntax-green">"tool:draft_proforma"</span>,
+    issuer_public_key=trusted_public_key,
+    tracker=UsageTracker(),
+)
+<span class="syntax-purple">def</span> <span class="syntax-blue">draft_proforma</span>(order_id: <span class="syntax-blue">str</span>):
+    <span class="syntax-purple">return</span> {<span class="syntax-green">"order_id"</span>: order_id, <span class="syntax-green">"status"</span>: <span class="syntax-green">"draft"</span>}
+
+<span class="syntax-muted"># Your runtime attaches the credential.</span>
+<span class="syntax-purple">with</span> use_token(scoped_token):
+    draft_proforma(order_id=<span class="syntax-green">"order-42"</span>)</code></pre>
+            </div>
+            <div
+              id="panel-node"
+              role="tabpanel"
+              aria-labelledby="tab-node"
+              tabindex="0"
+              hidden
+            >
+              <pre><code id="example-node"><span class="syntax-purple">import</span> { guard, UsageTracker, useToken }
+  <span class="syntax-purple">from</span> <span class="syntax-green">"swarmauth"</span>;
+
+<span class="syntax-purple">const</span> draftProforma = <span class="syntax-blue">guard</span>(
+  ({ orderId }) =&gt; ({ orderId, status: <span class="syntax-green">"draft"</span> }),
+  {
+    capability: <span class="syntax-green">"tool:draft_proforma"</span>,
+    publicKey: trustedPublicKey,
+    tracker: <span class="syntax-purple">new</span> UsageTracker(),
+  },
+);
+
+<span class="syntax-muted">// Your runtime attaches the credential.</span>
+<span class="syntax-blue">useToken</span>(scopedToken, () =&gt;
+  draftProforma({ orderId: <span class="syntax-green">"order-42"</span> }),
+);</code></pre>
+            </div>
+            <div class="code-caption">
+              <span class="code-caption-dot" aria-hidden="true"></span> Token
+              verified before the tool runs.
+            </div>
+          </div>
+        </div>
+        <p class="container developer-footnote">
+          Boundary examples from the current source. Provision trusted keys and
+          issuer policy outside the model; see the full example for setup.
+        </p>
+      </section>
+
+      <section
+        class="section container engineering-section"
+        aria-labelledby="engineering-title"
+      >
+        <div class="section-heading-row">
+          <div>
+            <p class="eyebrow">05 / BUILT IN THE OPEN</p>
+            <h2 id="engineering-title">
+              Inspect the protocol.<br />Run the checks.
+            </h2>
+          </div>
+          <p class="section-side-note">
+            A security boundary should be<br />something you can examine.
+          </p>
+        </div>
+        <div class="evidence-grid">
+          <a
+            class="evidence-card"
+            href="https://github.com/waspdrey/swarmauth/blob/main/SPEC.md"
+            ><span class="evidence-type">PROTOCOL</span>
+            <h3>Defined on the wire.</h3>
+            <p>
+              Claims, signature rules, threat model, and verification behavior
+              in a public specification.
+            </p>
+            <span class="evidence-link"
+              >Read the specification <span aria-hidden="true">↗</span></span
+            ></a
+          >
+          <a
+            class="evidence-card"
+            href="https://github.com/waspdrey/swarmauth/tree/main/spec/test-vectors"
+            ><span class="evidence-type">INTEROPERABILITY</span>
+            <h3>Shared test vectors.</h3>
+            <p>
+              Signed fixtures and expected outcomes checked across Python, Node,
+              TypeScript, and Go.
+            </p>
+            <span class="evidence-link"
+              >Explore the test vectors <span aria-hidden="true">↗</span></span
+            ></a
+          >
+          <a
+            class="evidence-card"
+            href="https://github.com/waspdrey/swarmauth/actions/workflows/ci.yml"
+            ><span class="evidence-type">ENGINEERING</span>
+            <h3>Checks you can verify.</h3>
+            <p>
+              Framework integrations, live Redis, package checks, and concurrent
+              enforcement tested in CI.
+            </p>
+            <span class="evidence-link"
+              >View the CI runs <span aria-hidden="true">↗</span></span
+            ></a
+          >
+        </div>
+        <div class="benchmark-note">
+          <strong>A concrete failure case.</strong>
+          <p>
+            SwarmBench models a compromised agent requesting an unauthorized
+            payout. The protected tool rejects it. It’s a scripted boundary
+            demonstration, not a claim that prompt injection is solved.
+          </p>
+          <a
+            class="text-link"
+            href="https://github.com/waspdrey/swarmauth/blob/main/benchmarks/swarmbench.py"
+            >Inspect SwarmBench <span aria-hidden="true">↗</span></a
+          >
+        </div>
+      </section>
+
+      <section class="faq-section container" aria-labelledby="faq-title">
+        <div>
+          <p class="eyebrow">THE IMPORTANT DISTINCTIONS</p>
+          <h2 id="faq-title">Clear boundaries.<br />Including ours.</h2>
+        </div>
+        <div class="faq-list">
+          <details>
+            <summary>
+              Does SwarmAuth prevent prompt injection?<span
+                class="faq-symbol"
+                aria-hidden="true"
+                >+</span
+              >
+            </summary>
+            <p>
+              It does not detect or eliminate prompt injection. It checks
+              authority before execution, so a compromised model still needs a
+              valid permission for the action it requests. A valid, overly broad
+              grant remains dangerous; issuer policy and least privilege matter.
+            </p>
+          </details>
+          <details>
+            <summary>
+              Is this a full OAuth implementation?<span
+                class="faq-symbol"
+                aria-hidden="true"
+                >+</span
+              >
+            </summary>
+            <p>
+              No. SwarmAuth is a focused capability-token protocol and
+              enforcement layer for agent-to-agent and agent-to-tool calls. It
+              does not replace transport authentication, an identity provider,
+              or all of OAuth.
+            </p>
+          </details>
+          <details>
+            <summary>
+              Do I need a central authorization service?<span
+                class="faq-symbol"
+                aria-hidden="true"
+                >+</span
+              >
+            </summary>
+            <p>
+              Signature verification runs locally against trusted public keys. A
+              distributed deployment needs shared state when enforcing usage
+              limits or revocation across processes. Issuance, key management,
+              and deployment topology remain under your control.
+            </p>
+          </details>
+          <details>
+            <summary>
+              What should stay outside the model?<span
+                class="faq-symbol"
+                aria-hidden="true"
+                >+</span
+              >
+            </summary>
+            <p>
+              Signing keys, grant policy, trust registries, and the approval
+              decision. Your trusted runtime supplies credentials, and tools
+              enforce permissions. Business validation, safe side effects, and
+              idempotency still belong in your application.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="closing-section">
+        <div class="container closing-inner">
+          <div>
+            <p class="eyebrow">BUILD WITH EXPLICIT AUTHORITY</p>
+            <h2>Give autonomy a boundary.</h2>
+            <p>
+              Start with one protected tool. Extend the same check across your
+              agents.
+            </p>
+          </div>
+          <a
+            class="button button-primary"
+            href="https://github.com/waspdrey/swarmauth"
+            >Explore the repository <span aria-hidden="true">↗</span></a
+          >
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer container">
+      <div>
+        <a class="wordmark footer-wordmark" href="#"
+          >Swarm<span>Auth</span
+          ><span class="wordmark-period" aria-hidden="true">.</span></a
+        >
+        <p>Authorization at the point of execution.</p>
+      </div>
+      <nav aria-label="Footer navigation">
+        <a href="https://github.com/waspdrey/swarmauth">GitHub</a
+        ><a href="https://github.com/waspdrey/swarmauth/blob/main/SPEC.md"
+          >Specification</a
+        ><a href="https://github.com/waspdrey/swarmauth/blob/main/SECURITY.md"
+          >Security</a
+        ><a href="https://github.com/waspdrey/swarmauth/blob/main/LICENSE"
+          >MIT License</a
+        >
+      </nav>
+      <p class="footer-credit">
+        Built by <a href="https://github.com/waspdrey">Kelvin Laryea</a>.
+      </p>
+    </footer>
+    <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
+  </body>
+</html>
