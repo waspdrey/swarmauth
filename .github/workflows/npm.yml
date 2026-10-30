@@ -25,6 +25,9 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Install development dependencies
+        run: npm ci
+
       - name: Test before publish
         run: npm test
 

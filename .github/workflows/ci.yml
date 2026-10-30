@@ -79,6 +79,9 @@ jobs:
       - name: Run Marrow procurement example
         run: python examples/marrow_procurement.py
 
+      - name: Run shared currency budget example
+        run: python examples/task_budgets.py
+
       - name: Run SwarmBench (smoke test)
         run: python benchmarks/swarmbench.py
 
@@ -96,7 +99,7 @@ jobs:
         run: pip install -e ".[dev,frameworks]"
 
       - name: Run framework adapter integration tests
-        run: pytest -v tests/test_framework_adapters.py
+        run: pytest -v tests/test_framework_adapters.py tests/test_production_controls.py
 
   # Validates the TypeScript reference implementation (ts/) against the same
   # spec/test-vectors/vectors.json the Python SDK enforces itself against in
@@ -150,24 +153,66 @@ jobs:
       - name: Install swarmauth + redis dependencies
         run: pip install -e ".[dev,redis]"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Node SDK development dependencies
+        working-directory: js
+        run: npm ci
+
+      - name: Test native async Node Redis enforcement
+        working-directory: js
+        env:
+          SWARMAUTH_TEST_REDIS_URL: redis://localhost:6379/0
+        run: npm test
+
       - name: Run Redis backend tests against a real Redis server
         env:
           SWARMAUTH_TEST_REDIS_URL: redis://localhost:6379/0
-        run: pytest -v tests/test_redis_backend.py tests/test_enforcement.py
+        run: pytest -v tests/test_redis_backend.py tests/test_enforcement.py tests/test_redis_interop.py tests/test_production_controls.py
 
   javascript:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["18", "22", "24"]
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install Node SDK development dependencies
+        working-directory: js
+        run: npm ci
 
       - name: Test the JavaScript SDK against spec/test-vectors
         working-directory: js
         run: npm test
+
+  go-sdk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.3"
+          cache: false
+      - name: Verify formatting
+        run: |
+          gofmt -w .
+          git diff --exit-code
+      - name: Verify protocol conformance and concurrent enforcement
+        run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
 
   release-artifact:
     runs-on: ubuntu-latest

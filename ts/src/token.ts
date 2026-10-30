@@ -29,6 +29,7 @@ export interface Constraints {
   maxAmountUsd?: number;
   rateLimitPerMin?: number;
   allowedParams?: Record<string, JsonValue>;
+  sharedBudget?: string;
 }
 
 /** Constraints as carried on a parsed/issued token: unset fields are
@@ -38,6 +39,7 @@ export interface NormalizedConstraints {
   maxAmountUsd: number | null;
   rateLimitPerMin: number | null;
   allowedParams: Record<string, JsonValue>;
+  sharedBudget?: string;
 }
 
 export interface CapabilityClaims {
@@ -70,6 +72,7 @@ function normalizeConstraints(c?: Constraints): NormalizedConstraints {
     maxAmountUsd: c?.maxAmountUsd ?? null,
     rateLimitPerMin: c?.rateLimitPerMin ?? null,
     allowedParams: c?.allowedParams ?? {},
+    ...(c?.sharedBudget != null ? { sharedBudget: c.sharedBudget } : {}),
   };
 }
 
@@ -87,6 +90,7 @@ function claimsToWireJson(claims: CapabilityClaims): JsonValue {
       max_amount_usd: claims.constraints.maxAmountUsd,
       rate_limit_per_min: claims.constraints.rateLimitPerMin,
       allowed_params: claims.constraints.allowedParams,
+      ...(claims.constraints.sharedBudget != null ? { shared_budget: claims.constraints.sharedBudget } : {}),
     },
     iat: claims.iat,
     exp: claims.exp,
@@ -123,7 +127,7 @@ function wireJsonToClaims(payload: unknown): CapabilityClaims {
   }
   if (p.constraints === null) throw new MalformedTokenError("Invalid constraints");
   const c = p.constraints ?? {};
-  const constraintFields = new Set(["max_calls", "max_amount_usd", "rate_limit_per_min", "allowed_params"]);
+  const constraintFields = new Set(["max_calls", "max_amount_usd", "rate_limit_per_min", "allowed_params", "shared_budget"]);
   if (!isObject(c) || Object.keys(c).some((key) => !constraintFields.has(key))) throw new MalformedTokenError("Invalid constraints");
   for (const key of ["max_calls", "rate_limit_per_min"]) {
     if (c[key] != null && (!Number.isSafeInteger(c[key]) || (c[key] as number) < 1)) throw new MalformedTokenError(`Invalid ${key}`);
@@ -132,6 +136,14 @@ function wireJsonToClaims(payload: unknown): CapabilityClaims {
     throw new MalformedTokenError("Invalid budget");
   }
   if (Object.hasOwn(c, "allowed_params") && (!isObject(c.allowed_params) || !validJson(c.allowed_params))) throw new MalformedTokenError("Invalid allowed_params");
+  if (c.shared_budget != null) {
+    const pins = isObject(c.allowed_params) ? c.allowed_params : {};
+    if (typeof c.shared_budget !== "string" || !c.shared_budget || pins.budget_id !== c.shared_budget ||
+        !Number.isSafeInteger(pins.amount_minor) || (pins.amount_minor as number) < 0 ||
+        typeof pins.currency !== "string" || !/^[A-Z]{3}$/.test(pins.currency)) {
+      throw new MalformedTokenError("Shared budget requires matching budget and monetary pins");
+    }
+  }
   return {
     iss: p.iss as string, sub: p.sub as string, jti: p.jti as string, capabilities: p.capabilities as string[],
     iat: p.iat as number, exp: p.exp as number,
@@ -140,6 +152,7 @@ function wireJsonToClaims(payload: unknown): CapabilityClaims {
       maxAmountUsd: c.max_amount_usd as number | undefined ?? null,
       rateLimitPerMin: c.rate_limit_per_min as number | undefined ?? null,
       allowedParams: c.allowed_params as Record<string, JsonValue> | undefined ?? {},
+      ...(c.shared_budget != null ? { sharedBudget: c.shared_budget as string } : {}),
     },
     ...(p.dlg ? { dlg: p.dlg as string } : {}), ...(p.prf ? { prf: p.prf as string } : {}),
   };
@@ -273,6 +286,9 @@ function covered(capability: string, granted: string[]): boolean {
 }
 
 function assertAttenuated(parent: CapabilityClaims, child: CapabilityClaims): void {
+  if (parent.constraints.sharedBudget != null && child.constraints.sharedBudget !== parent.constraints.sharedBudget) {
+    throw new DelegationError("Child drops or changes shared budget");
+  }
   if (parent.prf || !parent.dlg || parent.dlg !== child.iss || child.dlg || child.jti === parent.jti || child.sub !== parent.sub ||
       child.iat < parent.iat || child.exp > parent.exp || !child.capabilities.every((cap) => covered(cap, parent.capabilities))) {
     throw new DelegationError("Invalid or widened delegation");

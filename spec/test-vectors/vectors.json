@@ -1,5 +1,5 @@
 {
-  "spec_version": "0.1.0-draft",
+  "spec_version": "0.1.1-draft",
   "generated_by": "scripts/generate_test_vectors.py",
   "warning": "issuer_private_key_seed_hex below is a fixed, non-secret, deliberately unmysterious test seed (bytes(range(32))). NEVER use it for anything but verifying an implementation against these vectors.",
   "issuer_private_key_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
@@ -623,6 +623,127 @@
       },
       "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJtYXhfY2FsbHoiOjF9LCJleHAiOjE3MDAwMDAwMzAsImlhdCI6MTcwMDAwMDAwMCwiaXNzIjoiYWdlbnQ6cmVxdWVzdGVyLTAxIiwianRpIjoidmVjdG9yLXNjaGVtYSIsInN1YiI6InRvb2w6cHJvY2Vzc19wYXlvdXQifQ",
       "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJtYXhfY2FsbHoiOjF9LCJleHAiOjE3MDAwMDAwMzAsImlhdCI6MTcwMDAwMDAwMCwiaXNzIjoiYWdlbnQ6cmVxdWVzdGVyLTAxIiwianRpIjoidmVjdG9yLXNjaGVtYSIsInN1YiI6InRvb2w6cHJvY2Vzc19wYXlvdXQifQ.qLbyMAdXi7N4fDbKd3IJlPzrGD3hJEuI-incp2jlcmPjIH-4b7otiSYlHSlQmGGB_x8P1yyKIYdDJSobrYWzCQ"
+    },
+    {
+      "name": "shared_budget_valid",
+      "valid": true,
+      "description": "Schema and Unicode regression fixture.",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "shared_budget": "task-42",
+          "max_calls": null,
+          "max_amount_usd": null,
+          "rate_limit_per_min": null,
+          "allowed_params": {
+            "budget_id": "task-42",
+            "currency": "GHS",
+            "amount_minor": 100
+          }
+        },
+        "iat": 1700000000,
+        "exp": 1700000030,
+        "jti": "vector-schema"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6eyJhbW91bnRfbWlub3IiOjEwMCwiYnVkZ2V0X2lkIjoidGFzay00MiIsImN1cnJlbmN5IjoiR0hTIn0sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbCwic2hhcmVkX2J1ZGdldCI6InRhc2stNDIifSwiZXhwIjoxNzAwMDAwMDMwLCJpYXQiOjE3MDAwMDAwMDAsImlzcyI6ImFnZW50OnJlcXVlc3Rlci0wMSIsImp0aSI6InZlY3Rvci1zY2hlbWEiLCJzdWIiOiJ0b29sOnByb2Nlc3NfcGF5b3V0In0",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6eyJhbW91bnRfbWlub3IiOjEwMCwiYnVkZ2V0X2lkIjoidGFzay00MiIsImN1cnJlbmN5IjoiR0hTIn0sIm1heF9hbW91bnRfdXNkIjpudWxsLCJtYXhfY2FsbHMiOm51bGwsInJhdGVfbGltaXRfcGVyX21pbiI6bnVsbCwic2hhcmVkX2J1ZGdldCI6InRhc2stNDIifSwiZXhwIjoxNzAwMDAwMDMwLCJpYXQiOjE3MDAwMDAwMDAsImlzcyI6ImFnZW50OnJlcXVlc3Rlci0wMSIsImp0aSI6InZlY3Rvci1zY2hlbWEiLCJzdWIiOiJ0b29sOnByb2Nlc3NfcGF5b3V0In0.pr2mB5C7xvNxIktSVdAFi3PWNaff28ArUBeAiCL1DKRbO6WsLf1bwOvzuwHf_TVYktJsRr8MUeRQfzcljuh1Ag"
+    },
+    {
+      "name": "shared_budget_missing_pins",
+      "valid": false,
+      "description": "Schema and Unicode regression fixture.",
+      "error_code": "MALFORMED_TOKEN",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "shared_budget": "task-42"
+        },
+        "iat": 1700000000,
+        "exp": 1700000030,
+        "jti": "vector-schema"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJzaGFyZWRfYnVkZ2V0IjoidGFzay00MiJ9LCJleHAiOjE3MDAwMDAwMzAsImlhdCI6MTcwMDAwMDAwMCwiaXNzIjoiYWdlbnQ6cmVxdWVzdGVyLTAxIiwianRpIjoidmVjdG9yLXNjaGVtYSIsInN1YiI6InRvb2w6cHJvY2Vzc19wYXlvdXQifQ",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJzaGFyZWRfYnVkZ2V0IjoidGFzay00MiJ9LCJleHAiOjE3MDAwMDAwMzAsImlhdCI6MTcwMDAwMDAwMCwiaXNzIjoiYWdlbnQ6cmVxdWVzdGVyLTAxIiwianRpIjoidmVjdG9yLXNjaGVtYSIsInN1YiI6InRvb2w6cHJvY2Vzc19wYXlvdXQifQ.-XB9d2itaF4yLDMn05O-CujREMOa0vfszJQMm5CrtkpUy-vsA-I0DuOEUJYjumhho7pewbkIEkq3cm_K2Q4rBw"
+    },
+    {
+      "name": "shared_budget_currency_mismatch",
+      "valid": false,
+      "description": "Schema and Unicode regression fixture.",
+      "error_code": "MALFORMED_TOKEN",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "shared_budget": "task-42",
+          "allowed_params": {
+            "budget_id": "task-42",
+            "currency": "ghs",
+            "amount_minor": 100
+          }
+        },
+        "iat": 1700000000,
+        "exp": 1700000030,
+        "jti": "vector-schema"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6eyJhbW91bnRfbWlub3IiOjEwMCwiYnVkZ2V0X2lkIjoidGFzay00MiIsImN1cnJlbmN5IjoiZ2hzIn0sInNoYXJlZF9idWRnZXQiOiJ0YXNrLTQyIn0sImV4cCI6MTcwMDAwMDAzMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3Itc2NoZW1hIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6eyJhbW91bnRfbWlub3IiOjEwMCwiYnVkZ2V0X2lkIjoidGFzay00MiIsImN1cnJlbmN5IjoiZ2hzIn0sInNoYXJlZF9idWRnZXQiOiJ0YXNrLTQyIn0sImV4cCI6MTcwMDAwMDAzMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3Itc2NoZW1hIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9.QlDOKw5EK7VrAFC9GIbfuLzxNwabDBAko-B_AfxKnvMYkutVb-ie52pTNv8MdjrhcVhjZ6XAFGsKlafbNxbQBQ"
+    },
+    {
+      "name": "shared_budget_fractional_minor",
+      "valid": false,
+      "description": "Schema and Unicode regression fixture.",
+      "error_code": "MALFORMED_TOKEN",
+      "header": {
+        "alg": "EdDSA",
+        "typ": "JCT",
+        "kid": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg"
+      },
+      "claims": {
+        "iss": "agent:requester-01",
+        "sub": "tool:process_payout",
+        "capabilities": [
+          "tool:process_payout"
+        ],
+        "constraints": {
+          "shared_budget": "task-42",
+          "allowed_params": {
+            "budget_id": "task-42",
+            "currency": "GHS",
+            "amount_minor": 1.5
+          }
+        },
+        "iat": 1700000000,
+        "exp": 1700000030,
+        "jti": "vector-schema"
+      },
+      "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6eyJhbW91bnRfbWlub3IiOjEuNSwiYnVkZ2V0X2lkIjoidGFzay00MiIsImN1cnJlbmN5IjoiR0hTIn0sInNoYXJlZF9idWRnZXQiOiJ0YXNrLTQyIn0sImV4cCI6MTcwMDAwMDAzMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3Itc2NoZW1hIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9",
+      "token": "eyJhbGciOiJFZERTQSIsImtpZCI6IkE2RUh2X1BPRUw0ZGNOMFk1MHZBbVdmazFqQ2JwUTFmSGR5R1pCSlZNYmciLCJ0eXAiOiJKQ1QifQ.eyJjYXBhYmlsaXRpZXMiOlsidG9vbDpwcm9jZXNzX3BheW91dCJdLCJjb25zdHJhaW50cyI6eyJhbGxvd2VkX3BhcmFtcyI6eyJhbW91bnRfbWlub3IiOjEuNSwiYnVkZ2V0X2lkIjoidGFzay00MiIsImN1cnJlbmN5IjoiR0hTIn0sInNoYXJlZF9idWRnZXQiOiJ0YXNrLTQyIn0sImV4cCI6MTcwMDAwMDAzMCwiaWF0IjoxNzAwMDAwMDAwLCJpc3MiOiJhZ2VudDpyZXF1ZXN0ZXItMDEiLCJqdGkiOiJ2ZWN0b3Itc2NoZW1hIiwic3ViIjoidG9vbDpwcm9jZXNzX3BheW91dCJ9.9rj5pPYRVhx9ylHoAhEjk8jRxAcpgD_8iBOhT0_jf3q8EFHP_x44TXqTo0qEYDtARg9sOF6HTxYj5GuPnR0jBg"
     },
     {
       "name": "null_constraints",

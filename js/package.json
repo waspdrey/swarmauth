@@ -4,8 +4,12 @@
   "description": "OAuth 2.1 for autonomous AI agent swarms: signed, short-lived, capability-scoped delegation tokens.",
   "type": "module",
   "main": "src/index.js",
+  "types": "src/index.d.ts",
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    }
   },
   "files": [
     "src",
@@ -15,7 +19,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test test/*.test.js && tsc --noEmit --strict --target es2022 --module nodenext test/types.ts"
   },
   "license": "MIT",
   "repository": {
@@ -30,5 +34,11 @@
     "multi-agent",
     "ed25519"
   ],
-  "homepage": "https://github.com/waspdrey/swarmauth"
+  "homepage": "https://github.com/waspdrey/swarmauth",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "express": "^5.1.0",
+    "redis": "^5.0.0",
+    "typescript": "^5.6.0"
+  }
 }
