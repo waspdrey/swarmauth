@@ -30,13 +30,14 @@ from __future__ import annotations
 
 import math
 import time
+from decimal import Decimal
 from types import ModuleType
 from typing import TYPE_CHECKING, Sequence
 
 from swarmauth.crypto import generate_jti
 from swarmauth.exceptions import ConstraintViolationError, TokenExpiredError
 from swarmauth.limits import RETENTION_AFTER_EXP_SECONDS
-from swarmauth.middleware import _validated_amount
+from swarmauth.middleware import _decimal_sum, _decimal_text, _validated_amount
 from swarmauth.token import MAX_TTL_SECONDS, CapabilityClaims
 
 if TYPE_CHECKING:
@@ -94,22 +95,26 @@ class RedisUsageTracker:
                     now = time.time()
                     if any(now >= claims.exp + RETENTION_AFTER_EXP_SECONDS for claims in chain):
                         raise TokenExpiredError("Token expired before usage reservation")
+                    totals = []
                     for claims, (hash_key, zset_key) in zip(chain, keys, strict=True):
                         limits = claims.constraints
                         calls = int(pipe.hget(hash_key, "calls") or 0)
-                        spent = float(pipe.hget(hash_key, "amount") or 0.0)
+                        raw_spent = pipe.hget(hash_key, "amount") or b"0"
+                        spent = Decimal(raw_spent.decode("ascii") if isinstance(raw_spent, bytes) else str(raw_spent))
+                        total = _decimal_sum(spent, amount)
+                        totals.append(total)
                         recent = pipe.zcount(zset_key, now - 60, "+inf") if limits.rate_limit_per_min is not None else 0
                         if limits.max_calls is not None and calls + 1 > limits.max_calls:
                             raise ConstraintViolationError("Token call allowance exhausted", constraint="max_calls")
-                        if limits.max_amount_usd is not None and spent + amount > limits.max_amount_usd:
+                        if limits.max_amount_usd is not None and total > Decimal(str(limits.max_amount_usd)):
                             raise ConstraintViolationError("Token budget exhausted", constraint="max_amount_usd")
                         if limits.rate_limit_per_min is not None and recent + 1 > limits.rate_limit_per_min:
                             raise ConstraintViolationError("Token rate allowance exhausted", constraint="rate_limit_per_min")
                     pipe.multi()
-                    for claims, (hash_key, zset_key) in zip(chain, keys, strict=True):
+                    for claims, (hash_key, zset_key), total in zip(chain, keys, totals, strict=True):
                         ttl = max(self._key_ttl_seconds, math.ceil(claims.exp + RETENTION_AFTER_EXP_SECONDS - now))
                         pipe.hincrby(hash_key, "calls", 1)
-                        pipe.hincrbyfloat(hash_key, "amount", amount)
+                        pipe.hset(hash_key, "amount", _decimal_text(total))
                         # Unique member even when concurrent calls share the same clock tick.
                         pipe.zadd(zset_key, {generate_jti(): now})
                         pipe.zremrangebyscore(zset_key, "-inf", f"({now - 60}")

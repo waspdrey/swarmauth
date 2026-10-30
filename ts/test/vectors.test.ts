@@ -150,6 +150,13 @@ test("Unicode and whole-dollar issuance matches Python bytes", async () => {
   assert.equal(await buildToken(keyPair, claims), vector.token);
 });
 
+test("shared budget profile signs the same bytes as Python", async () => {
+  const vector = vectorsData.vectors.find((item: { name: string }) => item.name === "shared_budget_valid");
+  const keyPair = await KeyPair.fromPrivateBytes(hexToBytes(vectorsData.issuer_private_key_seed_hex));
+  const { parse } = await import("../src/index.js");
+  assert.equal(await buildToken(keyPair, parse(vector.token).claims), vector.token);
+});
+
 test("registry rotation and revocation apply to parent and holder keys", async () => {
   const { attenuate, InMemoryRevocationStore, parse } = await import("../src/index.js");
   const root = await KeyPair.generate();

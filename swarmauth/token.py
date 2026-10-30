@@ -55,6 +55,8 @@ class Constraints(BaseModel):
         description="Exact-match allowlist for specific call parameters, "
         "e.g. {'destination_account': 'acct_123'}.",
     )
+    shared_budget: Optional[str] = Field(default=None, min_length=1,
+                                       description="Named shared budget; requires a budget-aware execution tracker.")
 
     model_config = {"extra": "forbid", "strict": True, "allow_inf_nan": False}
 
@@ -74,6 +76,21 @@ class Constraints(BaseModel):
         if not valid(value):
             raise ValueError("allowed_params must contain finite JSON values and safe integers")
         return value
+
+    @model_validator(mode="after")
+    def _budget_pins(self) -> Constraints:
+        if self.shared_budget is not None:
+            pins = self.allowed_params
+            if pins.get("budget_id") != self.shared_budget:
+                raise ValueError("shared_budget must match pinned budget_id")
+            minor = pins.get("amount_minor")
+            currency = pins.get("currency")
+            if (isinstance(minor, bool) or not isinstance(minor, (int, float))
+                    or not 0 <= minor <= 2**53 - 1 or int(minor) != minor):
+                raise ValueError("Shared budgets require pinned integer amount_minor")
+            if not isinstance(currency, str) or len(currency) != 3 or not all("A" <= c <= "Z" for c in currency):
+                raise ValueError("Shared budgets require pinned three-letter currency")
+        return self
 
 
 class CapabilityClaims(BaseModel):
@@ -129,6 +146,8 @@ def claims_wire_dict(claims: CapabilityClaims) -> dict[str, Any]:
     change the canonical bytes of every existing token.
     """
     payload: dict[str, Any] = claims.model_dump(mode="json")
+    if payload["constraints"].get("shared_budget") is None:
+        payload["constraints"].pop("shared_budget", None)
     if payload.get("dlg") is None:
         payload.pop("dlg", None)
     if payload.get("prf") is None:
@@ -269,6 +288,8 @@ def _verify_core(
 
 
 def _assert_constraints_not_wider(parent: Constraints, child: Constraints) -> None:
+    if parent.shared_budget is not None and child.shared_budget != parent.shared_budget:
+        raise DelegationError("Attenuated token drops or changes shared budget")
     for name, parent_limit, child_limit in (
         ("max_calls", parent.max_calls, child.max_calls),
         ("max_amount_usd", parent.max_amount_usd, child.max_amount_usd),

@@ -24,6 +24,9 @@ dependencies = [
     "pydantic>=2.5",
 ]
 
+[project.scripts]
+swarmauth = "swarmauth.cli:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "fakeredis>=2.20", "ruff>=0.6", "mypy>=1.10", "pip-audit>=2.7"]
 # Only needed to run tests/test_framework_adapters.py against real installs;

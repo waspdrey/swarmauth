@@ -5,6 +5,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createPrivateKey, createPublicKey, randomBytes, sign, verify as verifyEd25519 } from "node:crypto";
 
+export { asyncGuard, asyncVerifyAndCheck, tokenContextMiddleware } from "./async.js";
+export { BudgetRule, BudgetUsageTracker, RedisUsageTracker } from "./redis.js";
+
 export const MAX_TTL_SECONDS = 30;
 export const MAX_LEEWAY_SECONDS = 2;
 export const RETENTION_AFTER_EXP_SECONDS = MAX_LEEWAY_SECONDS + 1;
@@ -85,7 +88,8 @@ function constraintsWire(constraints = {}) {
   const amount = constraints.max_amount_usd == null ? "null" : formatAmount(constraints.max_amount_usd);
   const calls = constraints.max_calls == null ? "null" : String(constraints.max_calls);
   const rate = constraints.rate_limit_per_min == null ? "null" : String(constraints.rate_limit_per_min);
-  return `{"allowed_params":${encode(allowed)},"max_amount_usd":${amount},"max_calls":${calls},"rate_limit_per_min":${rate}}`;
+  const budget = constraints.shared_budget == null ? "" : `,"shared_budget":${encode(constraints.shared_budget)}`;
+  return `{"allowed_params":${encode(allowed)},"max_amount_usd":${amount},"max_calls":${calls},"rate_limit_per_min":${rate}${budget}}`;
 }
 
 function claimsWire(claims) {
@@ -162,6 +166,7 @@ function emptyConstraints(constraints = {}) {
     max_amount_usd: constraints.max_amount_usd ?? null,
     max_calls: constraints.max_calls ?? null,
     rate_limit_per_min: constraints.rate_limit_per_min ?? null,
+    ...(constraints.shared_budget != null ? { shared_budget: constraints.shared_budget } : {}),
   };
 }
 
@@ -192,7 +197,7 @@ function validateClaims(claims) {
   }
   if (claims.constraints === null) fail("MALFORMED_TOKEN", "Invalid constraints");
   const limits = claims.constraints ?? {};
-  const names = new Set(["max_calls", "max_amount_usd", "rate_limit_per_min", "allowed_params"]);
+  const names = new Set(["max_calls", "max_amount_usd", "rate_limit_per_min", "allowed_params", "shared_budget"]);
   if (!isObject(limits) || Object.keys(limits).some((key) => !names.has(key))) fail("MALFORMED_TOKEN", "Invalid constraints");
   for (const key of ["max_calls", "rate_limit_per_min"]) {
     if (limits[key] != null && (!Number.isSafeInteger(limits[key]) || limits[key] < 1)) {
@@ -203,6 +208,12 @@ function validateClaims(claims) {
       !Number.isFinite(limits.max_amount_usd) || limits.max_amount_usd < 0)) fail("MALFORMED_TOKEN", "Invalid budget");
   if (Object.hasOwn(limits, "allowed_params") && (!isObject(limits.allowed_params) || !validJson(limits.allowed_params))) {
     fail("MALFORMED_TOKEN", "Invalid allowed_params");
+  }
+  if (limits.shared_budget != null) {
+    const pins = limits.allowed_params ?? {};
+    if (typeof limits.shared_budget !== "string" || !limits.shared_budget || pins.budget_id !== limits.shared_budget ||
+      !Number.isSafeInteger(pins.amount_minor) || pins.amount_minor < 0 || typeof pins.currency !== "string" ||
+      !/^[A-Z]{3}$/.test(pins.currency)) fail("MALFORMED_TOKEN", "Shared budgets require matching budget and monetary pins");
   }
 }
 
@@ -309,6 +320,9 @@ function assertAttenuated(parent, child) {
   }
   const parentConstraints = parent.constraints ?? {};
   const childConstraints = child.constraints ?? {};
+  if (parentConstraints.shared_budget != null && childConstraints.shared_budget !== parentConstraints.shared_budget) {
+    fail("DELEGATION_VIOLATION", "Attenuated token drops or changes shared budget");
+  }
   for (const name of ["max_calls", "max_amount_usd", "rate_limit_per_min"]) {
     if (limitIsWider(childConstraints[name], parentConstraints[name])) {
       fail("DELEGATION_VIOLATION", `Attenuated ${name} widens the parent limit`);
@@ -384,16 +398,28 @@ export class KeyRegistry {
     this.holders.set(iss, [key, ...existing]);
   }
 
+  revoke(iss, publicKey) {
+    const keys = (this.roots.get(iss) ?? []).filter((key) => !sameKey(key, publicKey));
+    if (keys.length) this.roots.set(iss, keys); else this.roots.delete(iss);
+  }
+
+  revokeHolder(iss, publicKey) {
+    const keys = (this.holders.get(iss) ?? []).filter((key) => !sameKey(key, publicKey));
+    if (keys.length) this.holders.set(iss, keys); else this.holders.delete(iss);
+  }
+
+  revokeIssuer(iss) { this.roots.delete(iss); this.holders.delete(iss); }
+
   keysFor(iss) {
     const keys = this.roots.get(iss);
     if (!keys?.length) fail("UNKNOWN_ISSUER", `No trusted key registered for issuer '${iss}'`);
-    return keys;
+    return keys.map((key) => Buffer.from(key));
   }
 
   holderKeysFor(iss) {
     const keys = this.holders.get(iss);
     if (!keys?.length) fail("UNKNOWN_ISSUER", `No holder key registered for delegate '${iss}'`);
-    return keys;
+    return keys.map((key) => Buffer.from(key));
   }
 }
 
@@ -436,6 +462,32 @@ export class IssuerPolicy {
   }
 }
 
+/** Keep the policy check and signing inseparable. Explicit iat/exp/jti are
+ * reserved for low-level conformance tooling, never accepted here. */
+export class TokenIssuer {
+  constructor(privateKey, { policy } = {}) {
+    if (!(policy instanceof IssuerPolicy)) throw new TypeError("TokenIssuer requires an IssuerPolicy");
+    this.privateKey = Buffer.from(privateKey);
+    if (this.privateKey.length !== 32) throw new TypeError("Expected a 32-byte Ed25519 seed");
+    this.policy = policy;
+  }
+  issue(request) {
+    for (const field of ["iat", "exp", "jti", "privateKey", "prf"]) {
+      if (Object.hasOwn(request, field)) throw new TypeError(`${field} cannot be overridden on TokenIssuer`);
+    }
+    const resolved = { ...request, ttlSeconds: request.ttlSeconds ?? 10 };
+    this.policy.check(resolved);
+    return issue({ ...resolved, privateKey: this.privateKey });
+  }
+  attenuate(request) {
+    const parent = parse(request.parent).claims;
+    const resolved = { ...request, ttlSeconds: request.ttlSeconds ?? 10 };
+    if (Object.hasOwn(request, "privateKey")) throw new TypeError("privateKey cannot be overridden");
+    this.policy.check({ ...resolved, sub: parent.sub, dlg: undefined });
+    return attenuate({ ...resolved, privateKey: this.privateKey });
+  }
+}
+
 function grantDenies(grant, { capabilities, constraints, ttlSeconds, dlg }) {
   for (const capability of capabilities) {
     if (!capabilityCovered(capability, grant.capabilities)) {
@@ -448,6 +500,9 @@ function grantDenies(grant, { capabilities, constraints, ttlSeconds, dlg }) {
   if (limitIsWider(constraints.rate_limit_per_min, grant.rateLimitPerMin)) return "rate_limit_per_min exceeds the grant ceiling";
   for (const [key, expected] of Object.entries(grant.pinnedParams)) {
     if (!Object.hasOwn(constraints.allowed_params ?? {}, key) || !jsonEqual(constraints.allowed_params[key], expected)) return `Issued token does not pin '${key}'`;
+  }
+  if (Object.hasOwn(grant.pinnedParams, "budget_id") && constraints.shared_budget !== grant.pinnedParams.budget_id) {
+    return "Grant requires an explicit shared_budget constraint";
   }
   if (dlg != null && !grant.delegates.includes(dlg)) return `Grant does not allow delegation to '${dlg}'`;
   return null;
@@ -472,12 +527,37 @@ function validatedAmount(amount) {
   return amount;
 }
 
+function decimalParts(value) {
+  const [mantissa, power = "0"] = String(value).split(/e/i);
+  const [whole, fraction = ""] = mantissa.split(".");
+  return [BigInt(whole + fraction), fraction.length - Number(power)];
+}
+
+export function addAmounts(left, right) {
+  const [a, aScale] = decimalParts(left);
+  const [b, bScale] = decimalParts(right);
+  const scale = Math.max(aScale, bScale, 0);
+  const total = a * 10n ** BigInt(scale - aScale) + b * 10n ** BigInt(scale - bScale);
+  const digits = total.toString().padStart(scale + 1, "0");
+  if (!scale) return digits;
+  return `${digits.slice(0, -scale)}.${digits.slice(-scale)}`.replace(/0+$/, "").replace(/\.$/, "");
+}
+
+export function amountExceeds(left, right) {
+  const [a, as] = decimalParts(left), [b, bs] = decimalParts(right);
+  const scale = Math.max(as, bs);
+  return a * 10n ** BigInt(scale - as) > b * 10n ** BigInt(scale - bs);
+}
+
 function stateful(claims) {
   return ["max_calls", "max_amount_usd", "rate_limit_per_min"].filter((key) => claims.constraints[key] != null);
 }
 
 function synchronous(result) {
   if (result && typeof result.then === "function") {
+    // Prevent an unhandled rejection after the synchronous path has already
+    // failed closed. Use asyncGuard to await the actual operation.
+    Promise.resolve(result).catch(() => {});
     throw new TypeError("SwarmAuth requires synchronous tracker and decision callbacks");
   }
 }
@@ -498,9 +578,9 @@ export class UsageTracker {
       const timestamps = previous.timestamps.filter((time) => time >= now - 60);
       const limits = claims.constraints;
       if (limits.max_calls != null && previous.calls + 1 > limits.max_calls) fail("CONSTRAINT_VIOLATION", "Token call allowance exhausted");
-      if (limits.max_amount_usd != null && previous.amount + amount > limits.max_amount_usd) fail("CONSTRAINT_VIOLATION", "Token budget exhausted");
+      if (limits.max_amount_usd != null && amountExceeds(addAmounts(previous.amount, amount), limits.max_amount_usd)) fail("CONSTRAINT_VIOLATION", "Token budget exhausted");
       if (limits.rate_limit_per_min != null && timestamps.length + 1 > limits.rate_limit_per_min) fail("CONSTRAINT_VIOLATION", "Token rate allowance exhausted");
-      return [claims.jti, { calls: previous.calls + 1, amount: previous.amount + amount,
+      return [claims.jti, { calls: previous.calls + 1, amount: addAmounts(previous.amount, amount),
         timestamps: [...timestamps, now], expiresAt: Math.max(previous.expiresAt, claims.exp + RETENTION_AFTER_EXP_SECONDS) }];
     });
     for (const [id, entry] of pending) this.usage.set(id, entry);
@@ -536,13 +616,16 @@ export function verifyAndCheck(token, options = {}) {
       }
     }
     if (stateful(claims).length && !options.tracker) fail("CONSTRAINT_VIOLATION", "Token limits require a usage tracker");
+    if (claims.constraints.shared_budget != null && !options.tracker?.supportsSharedBudgets) {
+      fail("CONSTRAINT_VIOLATION", "Shared budget requires a budget-aware tracker");
+    }
     if (claims.constraints.max_amount_usd != null && options.amount == null) {
       fail("CONSTRAINT_VIOLATION", "A budgeted call requires an explicit amount or amountArg");
     }
     const amount = options.amount == null ? 0 : validatedAmount(options.amount);
     if (options.tracker) {
       const parent = claims.prf ? parse(claims.prf).claims : null;
-      if (parent && stateful(parent).length) {
+      if (parent && (stateful(parent).length || options.tracker.requiresChain)) {
         if (typeof options.tracker.checkAndRecordChain !== "function") fail("CONSTRAINT_VIOLATION", "Delegated limits require atomic checkAndRecordChain");
         synchronous(options.tracker.checkAndRecordChain([parent, claims], amount));
       } else synchronous(options.tracker.checkAndRecord(claims, amount));

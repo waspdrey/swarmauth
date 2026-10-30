@@ -15,7 +15,8 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Optional, Sequence, TypeVar
+from decimal import Decimal, localcontext
+from typing import Any, Callable, Iterator, Optional, Protocol, Sequence, TypeVar
 
 from swarmauth.crypto import KeyPair
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError, SwarmAuthError, TokenExpiredError
@@ -26,6 +27,32 @@ from swarmauth.revocation import RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability, check_params
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+class UsageBackend(Protocol):
+    def check_and_record(self, claims: CapabilityClaims, *, amount: float = 0.0) -> Any:
+        """Reserve token usage, or raise before any action executes."""
+
+
+def _require_sync(result: Any) -> None:
+    """Never treat unawaited authorization work as a successful reservation."""
+    if inspect.isawaitable(result):
+        if inspect.iscoroutine(result):
+            result.close()
+        raise TypeError("Use async enforcement for asynchronous trackers and decision callbacks")
+
+
+def _decimal_sum(left: Decimal, right: float) -> Decimal:
+    # All finite binary64 decimal representations fit within this precision,
+    # including the gap between the largest normal and smallest subnormal.
+    with localcontext() as context:
+        context.prec = 1000
+        return left + Decimal(str(right))
+
+
+def _decimal_text(value: Decimal) -> str:
+    text = format(value, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
 
 # Kept past `exp` so a call accepted on the default 2-second leeway boundary
 # still sees the same usage record. Entries are then eligible for collection.
@@ -170,7 +197,7 @@ class TokenIssuer:
 @dataclass
 class _TokenUsage:
     call_count: int = 0
-    spent_amount: float = 0.0
+    spent_amount: Decimal = field(default_factory=lambda: Decimal(0))
     call_timestamps: list[float] = field(default_factory=list)
     expires_at: float = 0.0
 
@@ -220,14 +247,16 @@ class UsageTracker:
                 recent = [t for t in usage.call_timestamps if t >= now - 60]
                 if constraints.max_calls is not None and usage.call_count + 1 > constraints.max_calls:
                     raise ConstraintViolationError("Token call allowance exhausted", constraint="max_calls")
-                if constraints.max_amount_usd is not None and usage.spent_amount + amount > constraints.max_amount_usd:
+                if constraints.max_amount_usd is not None and (
+                    _decimal_sum(usage.spent_amount, amount) > Decimal(str(constraints.max_amount_usd))
+                ):
                     raise ConstraintViolationError("Token budget exhausted", constraint="max_amount_usd")
                 if constraints.rate_limit_per_min is not None and len(recent) + 1 > constraints.rate_limit_per_min:
                     raise ConstraintViolationError("Token rate allowance exhausted", constraint="rate_limit_per_min")
                 pending.append((claims, usage, recent))
             for claims, usage, recent in pending:
                 usage.call_count += 1
-                usage.spent_amount += amount
+                usage.spent_amount = _decimal_sum(usage.spent_amount, amount)
                 usage.call_timestamps = [*recent, now]
                 usage.expires_at = max(usage.expires_at, float(claims.exp) + _USAGE_RETENTION_AFTER_EXP_SECONDS)
                 self._usage[claims.jti] = usage
@@ -260,7 +289,7 @@ def verify_and_check(
     required_capability: Optional[str] = None,
     amount: Optional[float] = None,
     params: Optional[dict[str, Any]] = None,
-    tracker: Optional[UsageTracker] = None,
+    tracker: Optional[UsageBackend] = None,
     on_decision: Optional[Callable[[AuthorizationEvent], None]] = None,
 ) -> CapabilityClaims:
     """Verify a token's signature/expiry/audience, check capability + constraints,
@@ -287,6 +316,8 @@ def verify_and_check(
         if params is not None:
             check_params(claims, params)
         stateful = _stateful(claims)
+        if claims.constraints.shared_budget is not None and not getattr(tracker, "supports_shared_budgets", False):
+            raise ConstraintViolationError("Shared budget requires a budget-aware tracker", constraint="shared_budget")
         if stateful and tracker is None:
             raise ConstraintViolationError(
                 f"Token declares {', '.join(stateful)} but no usage tracker was provided", constraint=stateful[0],
@@ -298,24 +329,24 @@ def verify_and_check(
         resolved_amount = _validated_amount(amount) if amount is not None else 0.0
         if tracker is not None:
             parent = CapabilityToken.parse(claims.prf)[1] if claims.prf else None
-            if parent is not None and _stateful(parent):
+            if parent is not None and (_stateful(parent) or getattr(tracker, "requires_chain", False)):
                 atomic_record = getattr(tracker, "check_and_record_chain", None)
                 if not callable(atomic_record):
                     raise ConstraintViolationError(
                         "Delegated limits require a tracker with atomic check_and_record_chain", constraint="max_calls",
                     )
-                atomic_record([parent, claims], amount=resolved_amount)
+                _require_sync(atomic_record([parent, claims], amount=resolved_amount))
             else:
-                tracker.check_and_record(claims, amount=resolved_amount)
+                _require_sync(tracker.check_and_record(claims, amount=resolved_amount))
     except SwarmAuthError as exc:
         if on_decision is not None:
-            on_decision(AuthorizationEvent(
+            _require_sync(on_decision(AuthorizationEvent(
                 "denied", exc.code, claims.iss if claims else None, audience,
                 required_capability, claims.jti if claims else None,
-            ))
+            )))
         raise
     if on_decision is not None:
-        on_decision(AuthorizationEvent("allowed", None, claims.iss, claims.sub, required_capability, claims.jti))
+        _require_sync(on_decision(AuthorizationEvent("allowed", None, claims.iss, claims.sub, required_capability, claims.jti)))
     return claims
 
 
@@ -326,7 +357,7 @@ def guard(
     key_registry: Optional[KeyRegistry] = None,
     revocation_store: Optional[RevocationStore] = None,
     audience: Optional[str] = None,
-    tracker: Optional[UsageTracker] = None,
+    tracker: Optional[UsageBackend] = None,
     token_kwarg: str = "token",
     amount_kwarg: Optional[str] = None,
     on_decision: Optional[Callable[[AuthorizationEvent], None]] = None,
@@ -358,7 +389,9 @@ def guard(
             token = kwargs.pop(token_kwarg, None) or _current_token.get()
             if not token:
                 if on_decision is not None:
-                    on_decision(AuthorizationEvent("denied", "CAPABILITY_VIOLATION", None, bound_audience, capability, None))
+                    _require_sync(on_decision(AuthorizationEvent(
+                        "denied", "CAPABILITY_VIOLATION", None, bound_audience, capability, None,
+                    )))
                 raise CapabilityViolationError(
                     f"No JCT supplied (expected kwarg '{token_kwarg}' or use_token())", required=capability
                 )
@@ -424,7 +457,7 @@ def secure_tool_call(
     key_registry: Optional[KeyRegistry] = None,
     revocation_store: Optional[RevocationStore] = None,
     audience: Optional[str] = None,
-    tracker: Optional[UsageTracker] = None,
+    tracker: Optional[UsageBackend] = None,
     token_kwarg: str = "token",
     amount_kwarg: Optional[str] = None,
     on_decision: Optional[Callable[[AuthorizationEvent], None]] = None,
@@ -437,8 +470,7 @@ def secure_tool_call(
     most frameworks register a tool from an existing callable rather than
     letting you decorate a `def` in place. `amount_kwarg` names the wrapped
     function's parameter to read a spend amount from, for enforcing a
-    token's `max_amount_usd` constraint -- without it, budget constraints
-    are silently never charged for calls made through a framework adapter.
+    token's `max_amount_usd` constraint. A missing mapping fails closed.
     """
     return guard(
         capability,
@@ -464,13 +496,28 @@ def secure_langchain_tool(tool: Any, **kwargs: Any) -> Any:
         if callable(handler):
             setattr(tool, attribute, secure_tool_call(handler, **kwargs))
             wrapped = True
-    if wrapped:
-        return tool
-    if hasattr(tool, "_run"):
-        tool._run = secure_tool_call(tool._run, **kwargs)
-        # A custom asynchronous handler can bypass _run entirely.
-        if "_arun" in type(tool).__dict__:
+    function_handlers = wrapped
+
+    def owner_of(attribute: str) -> tuple[str, str]:
+        owner = next((cls for cls in type(tool).__mro__ if attribute in cls.__dict__), None)
+        return (owner.__module__, owner.__name__) if owner else ("", "")
+
+    structured = ("langchain_core.tools.structured", "StructuredTool")
+    if callable(getattr(tool, "_run", None)):
+        # The stock StructuredTool _run only forwards to func. Subclasses may
+        # replace it and ignore func, so wrapping func alone is insufficient.
+        if not (function_handlers and owner_of("_run") == structured):
+            tool._run = secure_tool_call(tool._run, **kwargs)
+        wrapped = True
+    if callable(getattr(tool, "_arun", None)):
+        # Only these known framework forwarders are already covered through
+        # func/coroutine/_run. Every custom override (including inherited ones)
+        # is an independent execution entry point and must be guarded.
+        forwarders = {("langchain_core.tools.base", "BaseTool"), structured}
+        if owner_of("_arun") not in forwarders:
             tool._arun = secure_tool_call(tool._arun, **kwargs)
+        wrapped = True
+    if wrapped:
         return tool
     raise TypeError(f"Object {tool!r} does not look like a LangChain tool (no .func or ._run)")
 
