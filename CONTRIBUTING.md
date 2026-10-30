@@ -206,3 +206,17 @@ For the live Redis suite, run both `tests/test_redis_backend.py` and
 Publishing remains triggered by a published GitHub release. Adding secrets
 alone does not publish or rerun a failed release. Merge the reviewed change,
 then publish the matching version tag when ready.
+
+## CI troubleshooting
+
+The Node SDK supports Node 18. For clock-only tests, use
+`t.mock.method(Date, "now", ...)`: Node 18's experimental timer API does not
+support the newer `timers.enable({ apis: ["Date"] })` shape. Keep the expiry
+and revocation boundary assertions enabled on every supported Node version.
+
+The Pages workflow deploys from `main` into the `github-pages` environment.
+If its deploy job fails before any steps run with "Branch main is not allowed
+to deploy", open repository **Settings → Environments → github-pages →
+Deployment branches and tags**, and add `main` as an allowed branch. Preserve
+any other protection rules. Re-run the failed deployment after updating the
+allowlist. Workflow file changes alone do not update environment permissions.
