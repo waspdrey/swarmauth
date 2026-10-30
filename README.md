@@ -76,6 +76,7 @@ policy = swarmauth.IssuerPolicy([
         max_ttl_seconds=30,
         max_calls=1,
         max_amount_usd=1000.0,
+        pinned_params={"destination_account": "acct_123"},
     )
 ])
 issuer = swarmauth.TokenIssuer(issuer_keys, policy=policy)
@@ -83,7 +84,10 @@ token = issuer.issue(
     iss="agent:requester-01",
     sub="tool:process_payout",
     capabilities=["tool:process_payout"],
-    constraints=swarmauth.Constraints(max_calls=1, max_amount_usd=1000.0),
+    constraints=swarmauth.Constraints(
+        max_calls=1, max_amount_usd=1000.0,
+        allowed_params={"destination_account": "acct_123"},
+    ),
     ttl_seconds=30,
 )
 
@@ -212,12 +216,89 @@ processes, the same way `RedisUsageTracker` shares usage state.
 All three are optional and additive: `issuer_public_key=` and the default
 in-memory `UsageTracker` still work exactly as in the quickstart above.
 
+## Production controls (unreleased)
+
+The next changes add shared task/agent budgets in integer currency units,
+awaited Python/Node enforcement, native async Node Redis accounting,
+revision-bound single-use approval grants, HTTP/MCP propagation, offline
+diagnostics, JSONL decision export, and a Go verifier/enforcer. The Node package
+now includes TypeScript declarations, a policy-bound `TokenIssuer`, and key
+revocation methods. See [the production guide](docs/production.md) and
+[Go SDK](go/README.md) for deployment boundaries and examples.
+
+Existing token encodings are preserved. Tokens opting into shared budgets add
+an explicit constraint that older SDKs reject. Upgrade verifiers before issuing
+those tokens. This repository change does not publish packages or a release.
+
+These APIs are available from this checkout and will ship in the next release;
+installing the currently published package may not include them yet.
+
+| SDK | Use it for | Enforcement and storage |
+|---|---|---|
+| [Python](swarmauth/) | Issuance, agent tools, approvals, ASGI and HTTP MCP | Sync/async guards; memory and Redis; shared currency budgets |
+| [Node.js + TypeScript types](js/) | Typed Node tools and Express services | Policy-bound issuance; sync/async guards; memory and native async Redis |
+| [Go](go/) | Verifying and enforcing tokens in Go services | `Authorize`, HTTP middleware, and atomic process-local tracking; custom distributed backends |
+| [Portable TypeScript reference](ts/) | Protocol interoperability and other Web Crypto runtimes | Issue/parse/verify and parameter checks; execution tracking is supplied separately |
+
+### A budget that survives fresh tokens
+
+A token's call/spend limits belong to its `jti`. A shared budget belongs to a
+task or agent, so issuing another token cannot reset the allowance. For GHS,
+use integer pesewas and pin the actual cost to the tool call:
+
+```python
+import time
+import swarmauth
+
+rules = [swarmauth.BudgetRule(
+    id="task-42", issuers=("cell:procurement",), currency="GHS",
+    max_amount_minor=500_000, expires_at=int(time.time()) + 3600,
+)]  # GHS 5,000 across all tokens authorized against this task
+tracker = swarmauth.BudgetUsageTracker(rules)
+
+params = {"budget_id": "task-42", "currency": "GHS", "amount_minor": 12500}
+constraints = swarmauth.Constraints(
+    max_calls=1, shared_budget="task-42", allowed_params=params,
+)
+# Issue under a trusted policy, then pass these same parameters to the guard.
+```
+
+Run [`examples/task_budgets.py`](examples/task_budgets.py) for the full flow.
+Across processes, use `RedisBudgetUsageTracker` in Python or
+`RedisUsageTracker` in Node. They share one ledger and atomically reserve
+parent, child, and task allowances. For async tools use `async_guard` /
+`asyncGuard`, which wait for authorization before executing.
+
+### Approvals, transports, and diagnostics
+
+- **Approvals:** `ApprovalService` binds a trusted approval to an exact resource
+  revision and content digest. Memory/Redis stores consume the approval once,
+  even across fresh tokens. Edited orders need fresh approval. Application
+  transactions and side-effect idempotency remain the caller's responsibility.
+- **HTTP:** ASGI and Express adapters attach bearer credentials to runtime
+  context; guarded tools still enforce the action. `secure_mcp_http_tool`
+  reads per-message MCP Context headers rather than reusing a session token.
+- **Diagnostics:** `python -m swarmauth inspect`, `verify`, and `policy-check`
+  provide offline troubleshooting. Inspection is explicitly unverified, and
+  offline verification never authorizes execution or reserves usage.
+- **Observability:** `JsonlDecisionSink` exports existing decision metadata
+  without raw tokens or tool arguments. Authorization events do not claim
+  that the tool's side effect succeeded.
+
+See [docs/production.md](docs/production.md) for working API shapes, trust
+boundaries, Redis durability requirements, and rolling-upgrade instructions.
+
 ## Install
 
 ```bash
 pip install swarmauth
 npm install swarmauth
 ```
+
+Python's Redis backends are optional: `pip install "swarmauth[redis]"`.
+The Node Redis adapter accepts a connected client pool from your application's
+`redis` package; Redis is not a SwarmAuth runtime dependency. The Go module is
+developed in `go/` and is not published by the Python/npm release workflows.
 
 The JavaScript package lives in [`js/`](js/) and documents the same protocol
 in [its README](https://github.com/waspdrey/swarmauth/blob/main/js/README.md).
@@ -346,14 +427,23 @@ swarmauth/
 │   ├── registry.py                   # KeyRegistry: multi-issuer trust + key rotation
 │   ├── policy.py                    # IssuerPolicy: what the signing key is allowed to mint
 │   ├── middleware.py                  # guard decorator, use_token, framework adapters
+│   ├── asyncio.py                     # awaited guards, trackers, and decision callbacks
+│   ├── budgets.py                     # shared currency budgets; memory/Redis ledger
+│   ├── approvals.py                   # revision-bound, single-use approval grants
+│   ├── transport.py                   # ASGI context and per-message HTTP MCP guards
+│   ├── cli.py                         # offline inspection and policy diagnostics
+│   ├── events.py                      # credential-free JSONL decision sink
 │   ├── revocation.py                   # RevocationStore + InMemoryRevocationStore
 │   ├── backends/
 │   │   └── redis_backend.py            # RedisUsageTracker, RedisRevocationStore (optional `redis` extra)
 │   ├── exceptions.py
 │   └── py.typed
 ├── examples/
-│   └── execution_boundary.py        # policy, runtime token, guard, one delegation hop
-├── js/                              # JavaScript SDK, verified against spec/test-vectors
+│   ├── execution_boundary.py        # policy, runtime token, guard, one delegation hop
+│   ├── marrow_procurement.py        # draft/approval/PO boundaries
+│   └── task_budgets.py              # shared GHS task allowance across fresh tokens
+├── js/                              # typed Node SDK, async Redis and Express support
+├── go/                              # standard-library verifier, enforcement and HTTP boundary
 ├── benchmarks/
 │   └── swarmbench.py                # runnable unprotected-vs-protected simulation
 └── tests/
@@ -364,7 +454,9 @@ swarmauth/
     ├── test_public_api.py             # every swarmauth.exceptions.* class must be exported at top level
     ├── test_spec_vectors.py            # enforces spec/test-vectors/vectors.json against this implementation
     ├── test_redis_backend.py         # runs against fakeredis, or a real server in CI
-    └── test_framework_adapters.py    # real LangChain, ag2, and MCP integration tests
+    ├── test_framework_adapters.py    # real LangChain, ag2, and MCP integration tests
+    ├── test_production_controls.py   # bypass regressions, approvals, budgets and HTTP
+    └── test_redis_interop.py         # Python/Node accounting against one Redis ledger
 ```
 
 ## Design principles
@@ -386,7 +478,7 @@ swarmauth/
 
 ## Status
 
-MVP / RFC. The token format, claims schema, and verification algorithm are
+RFC / beta SDKs. The token format, claims schema, and verification algorithm are
 considered stable for `0.x`. Multi-issuer key rotation (`KeyRegistry`,
 [SPEC.md §8](SPEC.md#8-key-registry-and-rotation)), token revocation
 (`RevocationStore`, [SPEC.md §9](SPEC.md#9-token-revocation)),
@@ -396,6 +488,12 @@ distributed usage tracking (`RedisUsageTracker`,
 attenuation ([SPEC.md §12](SPEC.md#12-attenuated-delegation)) ship in the
 SDK. Expect the framework adapters to keep evolving as more of them get
 real integration use. Issues and PRs welcome.
+
+The unreleased controls above include the optional `shared_budget` profile,
+documented in [SPEC.md §14](SPEC.md#14-shared-budget-execution-profile). The
+shared fixtures are checked by Python, Node, TypeScript, and Go. CI also runs
+framework/HTTP integration tests, live Redis and cross-runtime accounting,
+strict Python/TypeScript checks, Go race tests, and installed-wheel verification.
 
 ## License
 

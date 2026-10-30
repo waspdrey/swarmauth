@@ -8,13 +8,23 @@ This package speaks the same [JCT](https://github.com/waspdrey/swarmauth/blob/ma
 
 ## Install
 
+The package includes TypeScript declarations. For production issuance, use
+`TokenIssuer(privateKey, { policy })` to keep policy checks and signing together.
+The low-level signing example below remains useful for protocol tooling.
+`asyncGuard` and `asyncVerifyAndCheck` await network-backed stores; the native
+`RedisUsageTracker` accepts a connected node-redis client pool. Shared currency
+budgets use `shared_budget` plus signed `budget_id`, `currency`, and `amount_minor`
+parameter pins. See the [production guide](../docs/production.md).
+
 ```bash
 npm install swarmauth
 ```
 
 ## Quickstart
 
-`privateKey` is a 32-byte Ed25519 seed. Call `policy.check` before `issue`. `issue` signs whatever you pass it. The policy is what refuses a grant the issuer was not configured to make.
+`privateKey` is a 32-byte Ed25519 seed. `TokenIssuer` checks its policy and
+signs in one operation. Keep it outside model-accessible tools. Low-level
+`issue` signs whatever you pass it and is intended for protocol tooling.
 
 ```js
 import { randomBytes } from "node:crypto";
@@ -23,7 +33,7 @@ import {
   IssuerPolicy,
   UsageTracker,
   guard,
-  issue,
+  TokenIssuer,
   publicKeyFromSeed,
   useToken,
 } from "swarmauth";
@@ -50,8 +60,8 @@ const policy = new IssuerPolicy([
   }),
 ]);
 
-policy.check(request);
-const token = issue({ privateKey, ...request });
+const issuer = new TokenIssuer(privateKey, { policy });
+const token = issuer.issue(request);
 
 const tracker = new UsageTracker();
 

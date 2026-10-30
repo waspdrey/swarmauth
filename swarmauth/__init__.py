@@ -1,5 +1,8 @@
 """SwarmAuth: OAuth 2.1-style capability delegation for autonomous AI agent swarms."""
 
+from swarmauth.approvals import Approval, ApprovalService, InMemoryApprovalStore, RedisApprovalStore, request_digest
+from swarmauth.asyncio import async_guard, async_verify_and_check
+from swarmauth.budgets import AsyncUsageTracker, BudgetRule, BudgetUsageTracker, RedisBudgetUsageTracker
 from swarmauth.crypto import KeyPair
 from swarmauth.exceptions import (
     AudienceMismatchError,
@@ -50,4 +53,15 @@ __all__ = [
     "Grant",
     "IssuerPolicy",
     "__version__",
+    "async_guard",
+    "async_verify_and_check",
+    "AsyncUsageTracker",
+    "BudgetRule",
+    "BudgetUsageTracker",
+    "RedisBudgetUsageTracker",
+    "Approval",
+    "ApprovalService",
+    "InMemoryApprovalStore",
+    "RedisApprovalStore",
+    "request_digest",
 ]

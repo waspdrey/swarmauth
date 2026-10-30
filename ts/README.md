@@ -1,5 +1,11 @@
 # @swarmauth/core (TypeScript)
 
+For production Node tools, use the `swarmauth` npm package in `js/`, which now
+ships TypeScript declarations, guards, shared accounting, and async Redis support.
+This package remains the portable protocol reference. It understands the
+`shared_budget` wire constraint but does not reserve shared budgets or authorize
+execution. Never substitute `verify` alone for execution-boundary enforcement.
+
 TypeScript reference implementation of the SwarmAuth JSON Capability Token
 (JCT) protocol. See the [top-level README](../README.md) for what SwarmAuth
 is and why; see [SPEC.md](../SPEC.md) for the protocol itself, which this
