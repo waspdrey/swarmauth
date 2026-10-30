@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Production enforcement and shared budgets
+
+- Fixed inherited LangChain asynchronous handlers bypassing authorization;
+  the default asynchronous forwarder still charges exactly one call.
+- Python synchronous guards reject asynchronous tracker/decision results.
+  Added awaited Python/Node guards, thread-backed Python usage adapters, and
+  native async Node Redis accounting with isolated pooled connections.
+- USD usage sums use exact decimal arithmetic. Added atomic shared task/agent
+  budgets with integer minor units and explicit currencies in memory/Redis.
+  Python and Node use the same persistent ledger and reserve parent, child,
+  and scope records together. An explicit optional `shared_budget` constraint
+  prevents unsupported or older verifiers from silently skipping accounting.
+- Added revision/content-bound approval grants with in-memory/Redis stores;
+  one approval can authorize execution once across fresh tokens.
+- Node now includes TypeScript declarations, a policy-bound TokenIssuer,
+  root/holder key revocation, and defensive registry key copies.
+- Added ASGI/Express token propagation, per-message HTTP MCP guards, offline
+  inspection/policy diagnostics, JSONL decision export, and a dependency-free
+  Go verification/enforcement SDK with shared conformance and race tests.
+- Expanded CI for Node versions, real-framework/HTTP checks, live Redis,
+  Python/Node shared accounting, installed wheels, and Go. npm jobs install
+  development dependencies before testing. No release is published by this PR.
+
 ### Security fixes and release preparation (0.1.8)
 
 - Parent call, budget, and rate allowances are shared by all delegated children;

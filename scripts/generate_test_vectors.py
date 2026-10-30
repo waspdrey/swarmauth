@@ -388,6 +388,17 @@ def main() -> None:
         ("fractional_max_calls", False, {"constraints": {"max_calls": 1.5}}),
         ("negative_budget", False, {"constraints": {"max_amount_usd": -1}}),
         ("unknown_constraint", False, {"constraints": {"max_callz": 1}}),
+        ("shared_budget_valid", True, {"constraints": {"shared_budget": "task-42",
+            "max_calls": None, "max_amount_usd": None, "rate_limit_per_min": None, "allowed_params": {
+            "budget_id": "task-42", "currency": "GHS", "amount_minor": 100,
+        }}}),
+        ("shared_budget_missing_pins", False, {"constraints": {"shared_budget": "task-42"}}),
+        ("shared_budget_currency_mismatch", False, {"constraints": {"shared_budget": "task-42", "allowed_params": {
+            "budget_id": "task-42", "currency": "ghs", "amount_minor": 100,
+        }}}),
+        ("shared_budget_fractional_minor", False, {"constraints": {"shared_budget": "task-42", "allowed_params": {
+            "budget_id": "task-42", "currency": "GHS", "amount_minor": 1.5,
+        }}}),
         ("null_constraints", False, {"constraints": None}),
         ("null_allowed_params", False, {"constraints": {"allowed_params": None}}),
         ("unsafe_parameter_integer", False, {"constraints": {"allowed_params": {"id": 2**53}}}),
@@ -491,7 +502,7 @@ def main() -> None:
     ]
 
     out = {
-        "spec_version": "0.1.0-draft",
+        "spec_version": "0.1.1-draft",
         "generated_by": "scripts/generate_test_vectors.py",
         "warning": (
             "issuer_private_key_seed_hex below is a fixed, non-secret, "

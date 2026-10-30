@@ -88,6 +88,19 @@ flags something in a real dependency, that blocks merge until resolved
 
 ## Running the benchmark
 
+### Production control checks
+
+- `python examples/task_budgets.py` exercises shared integer-currency limits.
+- `pytest tests/test_production_controls.py` covers inherited async handlers,
+  awaited enforcement, approvals, budgets, and real ASGI/MCP dispatch.
+- In `js/`, run `npm ci && npm test` for runtime tests and TypeScript consumers.
+  Set `SWARMAUTH_TEST_REDIS_URL` to a disposable Redis database to enable the
+  native async integration tests. `tests/test_redis_interop.py` also needs these
+  Node development dependencies and verifies cross-runtime ledger accounting.
+- In `go/`, run `go test -race ./...` and `go vet ./...`.
+- Follow [docs/production.md](docs/production.md) for the optional shared-budget
+  profile. Older verifiers intentionally reject budget-bearing tokens.
+
 ```bash
 python benchmarks/swarmbench.py
 ```

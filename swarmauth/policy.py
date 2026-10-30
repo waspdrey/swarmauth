@@ -68,6 +68,20 @@ class IssuerPolicy:
     def allow(self, grant: Grant) -> None:
         self._grants.append(grant)
 
+    @classmethod
+    def from_dict(cls, value: Any) -> IssuerPolicy:
+        """Load trusted JSON policy configuration; never load model output here."""
+        if not isinstance(value, dict) or set(value) != {"grants"} or not isinstance(value["grants"], list):
+            raise ValueError("Policy must contain only a grants array")
+        grants = []
+        for entry in value["grants"]:
+            if not isinstance(entry, dict):
+                raise ValueError("Each grant must be an object")
+            grant = Grant(**entry)
+            Constraints(allowed_params=dict(grant.pinned_params))
+            grants.append(grant)
+        return cls(grants)
+
     def check(
         self,
         *,
@@ -119,6 +133,8 @@ def _grant_denies(
     for key, expected in grant.pinned_params.items():
         if key not in constraints.allowed_params or not json_value_equal(constraints.allowed_params[key], expected):
             return f"Issued token does not pin '{key}' to {expected!r}"
+    if "budget_id" in grant.pinned_params and constraints.shared_budget != grant.pinned_params["budget_id"]:
+        return "Grant requires an explicit shared_budget constraint"
     if dlg is not None and dlg not in grant.delegates:
         return f"Grant does not allow delegation to '{dlg}'"
     return None

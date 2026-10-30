@@ -131,6 +131,14 @@ verification time — enforcement requires a stateful usage tracker keyed by
 `max_calls` and `rate_limit_per_min` are meaningless against a single
 verification in isolation.
 
+`shared_budget` is an optional non-empty string identifying a configured
+shared task/agent budget (§14). If set, `allowed_params` MUST pin `budget_id`
+to that same string, `currency` to an uppercase three-letter code, and
+`amount_minor` to a non-negative integer value no greater than `2^53 - 1`.
+Currency scale is configured by the application (for example, GHS pesewas).
+This constraint MUST be enforced by a budget-aware execution tracker, even
+if no other numeric limit is present. An unsupported tracker is an error.
+
 ### 3.4 Canonicalization
 
 The signature covers `base64url(header) + "." + base64url(payload)` as
@@ -140,6 +148,8 @@ ASCII bytes. Header and payload JSON are produced with:
 - no insignificant whitespace (`separators=(",", ":")`),
 - `ensure_ascii=True` (non-ASCII escaped, avoiding encoding ambiguity).
 - `dlg` and `prf`, when absent, are omitted. They are not encoded as JSON `null`.
+- An absent `shared_budget` constraint is omitted, preserving existing token
+  bytes. Other legacy unset constraint fields keep their existing encoding.
 
 Any conforming implementation MUST reproduce byte-identical JSON for the
 same claims object, since Ed25519 verification is over these exact bytes.
@@ -189,6 +199,8 @@ Given a token string `T` and an expected audience `A`, a verifier MUST:
     and reserve BOTH parent and child allowances; all siblings share the parent
     record. Reject a tracker without this atomic operation, and leave all
     records unchanged when any check fails.
+    If `shared_budget` is present, also require budget-aware tracking and
+    reserve its configured shared allowance in the same atomic operation (§14).
 
 Steps 1–11 are pure functions of the token (plus, for step 9, the
 revocation store's current state, and for step 10, the parent token) and
@@ -436,6 +448,7 @@ signed by the holder key of `iss`. Verifiers MUST:
    to the parent. An absent parent limit may stay absent or be set. Every
    parent `allowed_params` pin must appear unchanged on the child. The
    child may add pins.
+   A child MUST NOT drop or change a present parent `shared_budget` constraint.
 7. At the execution boundary, charge all parent and child numeric allowances
    in a single atomic reservation (§4 step 14). A new sibling `jti` does not
    create a new parent allowance. A failure against either token changes
@@ -446,7 +459,44 @@ The reference SDK exposes this as `CapabilityToken.attenuate` /
 
 ## 13. Versioning
 
-This is `0.1.0-draft`, the MVP surface. Backwards-incompatible changes to
+This is `0.1.1-draft`. Backwards-incompatible changes to
 the header/claims schema will bump the `typ` value away from `"JCT"` (or
 introduce a versioned successor, e.g. `"JCT2"`) so that old and new
 verifiers never silently misinterpret each other's tokens.
+
+Optional constraints may be added with reject-unknown semantics: tokens that
+do not use the extension retain their previous encoding, and old verifiers
+reject tokens that do use it. `shared_budget` follows this rule. Deployments
+must upgrade verifiers before enabling the extension. No verifier may silently
+ignore an unknown constraint.
+
+## 14. Shared budget execution profile
+
+A shared budget is trusted execution configuration with a stable id, trusted
+root issuer allowlist, currency, integer minor-unit ceiling, expiry, and optional
+call ceiling. The token never chooses its own budget ceiling. Actual call
+parameters must match the token's budget, currency, and amount pins before any
+accounting occurs. A delegated call is charged to the root issuer's authorized
+budget, not to authority inferred from the holder's name alone.
+
+All parent/child token counters and the shared budget record MUST be checked
+and reserved atomically. Rejecting any record MUST leave all records unchanged.
+Fresh token ids MUST NOT reset the budget. Expired scopes, unknown ids, wrong
+currencies, unauthorized issuers, or unsupported stores MUST fail closed.
+The budget's lifetime is independent of the 30-second JCT lifetime.
+
+The reference Python/Node Redis ledger uses SHA-256 of compact UTF-8 JSON
+`["token", jti]` or `["budget", id]` under one configured prefix. Records store
+`calls`, decimal-text `usd`, integer `minor`, rate timestamps, and expiry.
+Token entries survive the acceptance window; budget entries survive until
+scope expiry. Both runtimes use the same namespace and record semantics.
+
+Legacy USD budgets retain their meaning and MUST be accumulated as exact
+decimal representations of the finite input amounts. In particular, `0.1`
+plus `0.2` is within a `0.3` ceiling; adding a positive excess is rejected.
+Currency budgets instead use integer arithmetic and never perform implicit
+foreign-exchange conversion.
+
+Atomic reservation is authorization, not a guarantee of tool success or an
+exactly-once business transaction. Failures after a reservation remain charged.
+Applications must handle side-effect idempotency and storage durability.
