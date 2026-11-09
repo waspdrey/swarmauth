@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-from html import escape
 import json
 import secrets
 import smtplib
@@ -19,6 +18,7 @@ import threading
 import time
 from dataclasses import dataclass
 from email.message import EmailMessage
+from html import escape
 from typing import Callable, Dict, Mapping, Optional, Protocol, TypedDict, cast
 from urllib.request import Request, urlopen
 
@@ -301,7 +301,11 @@ class EmailApprovalChannel:
         return {
             "subject": f"Approval required: {request.action}",
             "text": f"{request.summary}\n\nApprove: {approve_url}\nReject: {reject_url}",
-            "html": f'<p>{escape(request.summary)}</p><p><a href="{escape(approve_url, quote=True)}">Approve</a> · <a href="{escape(reject_url, quote=True)}">Reject</a></p>',
+            "html": (
+                f'<p>{escape(request.summary)}</p><p>'
+                f'<a href="{escape(approve_url, quote=True)}">Approve</a> · '
+                f'<a href="{escape(reject_url, quote=True)}">Reject</a></p>'
+            ),
         }
 
 

@@ -108,7 +108,8 @@ class ControlPlaneHTTPApp:
     def _respond(start_response: Callable[..., Any], status: int, value: Any) -> list[bytes]:
         body = b"" if status == 204 else json.dumps(value, sort_keys=True).encode("utf-8")
         phrase = {
-            200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found"
+            200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request",
+            401: "Unauthorized", 403: "Forbidden", 404: "Not Found"
         }[status]
         start_response(
             f"{status} {phrase}",
