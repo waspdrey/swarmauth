@@ -93,3 +93,21 @@ class DelegationError(SwarmAuthError):
     """Raised when a delegation chain widens authority or is presented incorrectly."""
 
     code = "DELEGATION_VIOLATION"
+
+
+class ControlPlaneAccessError(SwarmAuthError):
+    """Raised when a control-plane principal lacks tenant or role access."""
+
+    code = "CONTROL_PLANE_ACCESS_DENIED"
+
+
+class ControlPlaneAuthenticationError(SwarmAuthError):
+    """Raised when the control-plane bearer credential cannot be resolved."""
+
+    code = "CONTROL_PLANE_AUTHENTICATION_FAILED"
+
+
+class ApprovalError(SwarmAuthError):
+    """Raised when a human approval request or link is invalid."""
+
+    code = "APPROVAL_ERROR"

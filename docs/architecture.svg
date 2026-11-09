@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img" aria-labelledby="title desc">
+  <title id="title">SwarmAuth architecture</title>
+  <desc id="desc">An agent request travels through runtime authorization checks, optionally pauses for human approval, and then reaches a tool. Failed checks are denied before side effects.</desc>
+  <style>
+    :root { color-scheme: dark; }
+    .bg { fill: #0b1020; }
+    .grid { stroke: #17233b; stroke-width: 1; opacity: .65; }
+    .label { fill: #f5f7ff; font: 700 22px ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    .small { fill: #aebbd5; font: 500 15px ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    .tiny { fill: #7f91b4; font: 700 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .card { fill: #111a2d; stroke: #304667; stroke-width: 2; }
+    .card-check { fill: #111a2d; stroke: #5797ff; stroke-width: 2; }
+    .card-good { fill: #102b24; stroke: #5ee1a0; stroke-width: 2; }
+    .card-stop { fill: #311a25; stroke: #ff8298; stroke-width: 2; }
+    .connector { fill: none; stroke: #526986; stroke-width: 3; stroke-linecap: round; }
+    .flow { fill: none; stroke: #65d89a; stroke-width: 4; stroke-linecap: round; stroke-dasharray: 10 14; animation: travel 1.4s linear infinite; }
+    .pulse { fill: #65d89a; filter: drop-shadow(0 0 8px #65d89a); animation: breathe 1.8s ease-in-out infinite; }
+    .denied { stroke: #ff8298; }
+    .human { animation: breathe 2.2s ease-in-out infinite; transform-origin: 790px 390px; }
+    @keyframes travel { to { stroke-dashoffset: -48; } }
+    @keyframes breathe { 0%, 100% { opacity: .65; } 50% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) {
+      .flow, .pulse, .human { animation: none; }
+    }
+  </style>
+
+  <rect class="bg" width="1200" height="560" rx="28"/>
+  <path class="grid" d="M0 80H1200M0 160H1200M0 240H1200M0 320H1200M0 400H1200M0 480H1200M120 0V560M240 0V560M360 0V560M480 0V560M600 0V560M720 0V560M840 0V560M960 0V560M1080 0V560"/>
+
+  <text class="tiny" x="56" y="52">THE REQUEST</text>
+  <text class="label" x="56" y="105">Agent + LLM</text>
+  <text class="small" x="56" y="132">“Refund INV-100”</text>
+  <rect class="card" x="40" y="160" width="170" height="90" rx="16"/>
+  <text class="small" x="62" y="198">model suggests</text>
+  <text class="small" x="62" y="222">an action</text>
+
+  <path class="connector" d="M210 205H275"/>
+  <path class="flow" d="M210 205H275"/>
+  <circle class="pulse" r="6"><animateMotion dur="1.4s" repeatCount="indefinite" path="M210 205H275"/></circle>
+
+  <text class="tiny" x="285" y="52">THE HIDDEN WRISTBAND</text>
+  <text class="label" x="285" y="105">Runtime</text>
+  <text class="small" x="285" y="132">token stays out of the model</text>
+  <rect class="card" x="270" y="160" width="180" height="90" rx="16"/>
+  <text class="small" x="292" y="198">attaches short-lived</text>
+  <text class="small" x="292" y="222">authority</text>
+
+  <path class="connector" d="M450 205H515"/>
+  <path class="flow" d="M450 205H515"/>
+  <circle class="pulse" r="6"><animateMotion dur="1.4s" begin=".35s" repeatCount="indefinite" path="M450 205H515"/></circle>
+
+  <text class="tiny" x="525" y="52">THE BOUNCER</text>
+  <text class="label" x="525" y="105">SwarmAuth guard</text>
+  <rect class="card-check" x="510" y="140" width="235" height="154" rx="16"/>
+  <text class="small" x="535" y="174">✓ signature</text>
+  <text class="small" x="535" y="201">✓ fresh token</text>
+  <text class="small" x="535" y="228">✓ right capability</text>
+  <text class="small" x="535" y="255">✓ limits + parameters</text>
+  <circle class="pulse" cx="720" cy="274" r="6"/>
+
+  <path class="connector" d="M745 205H1045"/>
+  <path class="flow" d="M745 205H1045"/>
+  <circle class="pulse" r="6"><animateMotion dur="1.4s" begin=".7s" repeatCount="indefinite" path="M745 205H1045"/></circle>
+
+  <text class="tiny" x="910" y="52">THE SIDE EFFECT</text>
+  <text class="label" x="910" y="105">Tool</text>
+  <text class="small" x="910" y="132">runs only when allowed</text>
+  <rect class="card-good" x="1035" y="160" width="125" height="90" rx="16"/>
+  <text class="small" x="1057" y="198">refund()</text>
+  <text class="small" x="1057" y="222">runs</text>
+
+  <path class="connector" d="M628 294V390H790"/>
+  <path class="flow" d="M628 294V390H790"/>
+  <text class="tiny" x="530" y="380">HIGH-STAKES?</text>
+  <g class="human">
+    <rect class="card" x="790" y="345" width="220" height="90" rx="16"/>
+    <text class="label" x="815" y="382" font-size="19">Human approval</text>
+    <text class="small" x="815" y="409">one click, then continue</text>
+  </g>
+  <path class="connector" d="M1010 390H1080V250"/>
+  <path class="flow" d="M1010 390H1080V250"/>
+
+  <path class="connector denied" d="M745 265H840V505H655"/>
+  <path class="flow denied" d="M745 265H840V505H655"/>
+  <rect class="card-stop" x="420" y="460" width="235" height="64" rx="16"/>
+  <text class="label" x="447" y="500" font-size="19">Denied = no side effect</text>
+</svg>

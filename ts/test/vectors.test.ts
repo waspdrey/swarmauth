@@ -15,6 +15,8 @@ import {
   AudienceMismatchError,
   CapabilityViolationError,
   ConstraintViolationError,
+  DelegationError,
+  KeyRegistry,
   InvalidSignatureError,
   KeyPair,
   MalformedTokenError,
@@ -44,6 +46,7 @@ const ERROR_CODE_TO_CLASS: Record<string, new (message: string) => Error> = {
   AUDIENCE_MISMATCH: AudienceMismatchError,
   CAPABILITY_VIOLATION: CapabilityViolationError,
   CONSTRAINT_VIOLATION: ConstraintViolationError,
+  DELEGATION_VIOLATION: DelegationError,
 };
 
 test("vectors.json has the expected shape", () => {
@@ -79,7 +82,15 @@ for (const vector of vectorsData.vectors as Array<Record<string, unknown>>) {
     }
 
     if (vector.valid) {
-      const claims = await verify(token, { issuerPublicKey });
+      const verifyOptions = vector.delegate_public_key_hex
+        ? (() => {
+            const registry = new KeyRegistry();
+            registry.register(vector.root_iss as string, issuerPublicKey);
+            registry.registerHolder(vector.delegate_iss as string, hexToBytes(vector.delegate_public_key_hex as string));
+            return { registry };
+          })()
+        : { issuerPublicKey };
+      const claims = await verify(token, verifyOptions);
       const expected = vector.claims as Record<string, unknown>;
       assert.equal(claims.iss, expected.iss);
       assert.equal(claims.jti, expected.jti);
@@ -87,7 +98,15 @@ for (const vector of vectorsData.vectors as Array<Record<string, unknown>>) {
     } else {
       const ExpectedError = ERROR_CODE_TO_CLASS[vector.error_code as string];
       assert.ok(ExpectedError, `no TS class mapped for error_code ${vector.error_code}`);
-      await assert.rejects(() => verify(token, { issuerPublicKey }), ExpectedError);
+      const verifyOptions = vector.delegate_public_key_hex
+        ? (() => {
+            const registry = new KeyRegistry();
+            registry.register(vector.root_iss as string, issuerPublicKey);
+            registry.registerHolder(vector.delegate_iss as string, hexToBytes(vector.delegate_public_key_hex as string));
+            return { registry };
+          })()
+        : { issuerPublicKey };
+      await assert.rejects(() => verify(token, verifyOptions), ExpectedError);
     }
   });
 }

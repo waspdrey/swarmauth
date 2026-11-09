@@ -20,7 +20,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "cryptography>=42.0",
+    "cryptography>=50.0.0",
     "pydantic>=2.5",
 ]
 
@@ -32,6 +32,8 @@ frameworks = ["langchain-core>=0.3", "ag2>=1.0", "mcp>=1.0"]
 # Only needed for swarmauth.backends.redis_backend.RedisUsageTracker; the
 # default swarmauth.middleware.UsageTracker (in-memory) has no such dependency.
 redis = ["redis>=5.0"]
+oidc = ["PyJWT>=2.9"]
+server = ["gunicorn>=22.0"]
 
 [project.urls]
 Homepage = "https://github.com/waspdrey/swarmauth"

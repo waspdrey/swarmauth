@@ -15,6 +15,7 @@ export {
   AudienceMismatchError,
   CapabilityViolationError,
   ConstraintViolationError,
+  DelegationError,
   InvalidSignatureError,
   MalformedTokenError,
   SwarmAuthError,
@@ -23,4 +24,5 @@ export {
   TokenRevokedError,
   UnknownIssuerError,
 } from "./errors.js";
+export { KeyRegistry } from "./token.js";
 export { b64urlDecode, b64urlEncode } from "./base64.js";

@@ -74,6 +74,16 @@ class KeyRegistry:
             existing = [key for key in self._holders.get(iss, []) if key != public_key]
             self._holders[iss] = [public_key, *existing]
 
+    def replace(self, iss: str, public_key: bytes, *, holder: bool) -> None:
+        """Replace an issuer's trust role and remove the superseded namespace."""
+        with self._lock:
+            if holder:
+                self._keys.pop(iss, None)
+                self._holders[iss] = [public_key]
+            else:
+                self._holders.pop(iss, None)
+                self._keys[iss] = [public_key]
+
     def revoke_holder(self, iss: str, public_key: bytes) -> None:
         """Stop trusting `public_key` as a delegation holder for `iss`."""
         with self._lock:
@@ -111,3 +121,20 @@ class KeyRegistry:
     def is_known(self, iss: str) -> bool:
         with self._lock:
             return iss in self._keys and bool(self._keys[iss])
+
+    def snapshot(self, iss: str) -> tuple[list[bytes], list[bytes]]:
+        """Return root and holder trust for transactional state restoration."""
+        with self._lock:
+            return list(self._keys.get(iss, [])), list(self._holders.get(iss, []))
+
+    def restore(self, iss: str, roots: list[bytes], holders: list[bytes]) -> None:
+        """Restore a snapshot captured before a failed durable mutation."""
+        with self._lock:
+            if roots:
+                self._keys[iss] = list(roots)
+            else:
+                self._keys.pop(iss, None)
+            if holders:
+                self._holders[iss] = list(holders)
+            else:
+                self._holders.pop(iss, None)

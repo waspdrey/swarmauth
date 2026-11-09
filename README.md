@@ -3,368 +3,459 @@
 [![PyPI](https://img.shields.io/pypi/v/swarmauth.svg)](https://pypi.org/project/swarmauth/)
 [![CI](https://github.com/waspdrey/swarmauth/actions/workflows/ci.yml/badge.svg)](https://github.com/waspdrey/swarmauth/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python](https://img.shields.io/pypi/pyversions/swarmauth.svg)](https://pypi.org/project/swarmauth/)
 
-**The zero-trust authorization standard for multi-agent systems.**
+> The LLM can hallucinate. Your money, production cluster, and patient records
+> should not have to pay for it.
 
-SwarmAuth is OAuth 2.1 for autonomous AI swarms: cryptographically signed,
-short-lived (≤30s), capability-scoped delegation tokens for agent-to-agent
-and agent-to-tool calls. It's built on one assumption you should already
-hold — your LLM layer *will* be compromised by prompt injection — and asks a
-different question: when that happens, does the execution boundary stop the
-damage, or does it just trust whatever the model decided?
+SwarmAuth is the execution-boundary authorization layer for AI agents. It
+turns “the model asked for this” into “this exact agent may call this exact
+tool, with these exact limits, for the next few seconds.”
 
-Today, most multi-agent stacks pass raw API keys or unscoped bearer tokens
-between agents. Read the full threat model and protocol details in
-[SPEC.md](SPEC.md).
+```text
+prompt injection → model asks for something wild
+                 ↓
+          SwarmAuth guard
+                 ↓
+       allowed / denied before side effect
+```
 
-UCAN, Biscuit, and macaroons are the tools for open-ended multi-hop
-attenuation. MCP authorization and agent-to-agent protocols are where
-session and transport auth are heading. SwarmAuth is the check in front of
-the tool: one Ed25519 algorithm, a 30-second ceiling the verifier enforces,
-an audience bound to that tool, and call, budget, and parameter limits that
-fail closed. A worker can narrow a grant once, when the parent token names
-them. The private key and the grant policy stay in a process the model
-cannot call.
+It uses signed, short-lived, capability-scoped tokens. The model never gets a
+raw API key, and the tool never trusts the model just because it sounds
+confident.
 
-SwarmAuth has no opinion about what your agents *do* — a `capability` is
-just a string your policy defines, and `@guard()` wraps any Python callable.
-The examples below use a finance payout because unauthorized money movement
-makes the stakes obvious, but the same call protects any tool an LLM can
-decide to invoke: a support agent issuing a refund, a DevOps agent running
-an infra command, a coding agent merging or deploying, a research agent
-spending against a paid API, a healthcare agent writing to a record, an
-ETL agent triggering a pipeline run — anywhere an autonomous decision meets
-an action with real consequences.
+## The 60-second version
 
-## Why
-
-- **Prompt injection is not a solved problem, and won't be soon.** SwarmAuth
-  doesn't try to detect or prevent it — it makes the LLM's decision
-  irrelevant at the point of execution.
-- **Capability tokens, not credentials.** A token names exactly what it
-  authorizes (`capabilities`), against whom (`sub`), and under what limits
-  (`constraints`: rate limits, call caps, budget caps, parameter
-  allowlists) — never a raw, reusable key.
-- **Tokens expire in seconds.** Max TTL is 30 seconds (10 by default), enforced by every
-  verifier regardless of what an issuer tries to claim.
-- **Zero exotic dependencies.** Ed25519 via `cryptography`, schema via
-  `pydantic`. That's the whole dependency tree — `KeyRegistry` needs neither,
-  and `RedisUsageTracker` is an opt-in extra, not baked into the core.
-- **Sub-millisecond verification.** See benchmark results below.
-- **Built for more than two agents.** `KeyRegistry` trusts many issuers at
-  once and rotates keys without a hard cutover; `RedisUsageTracker`
-  enforces rate/budget/call limits atomically across every verifier
-  process in the swarm, not just one.
-
-## Quickstart
-
-The signing key and the grant live in the issuer process. The tool process
-holds the public key, a usage tracker, and the guard. The model never sees
-the token; the runtime attaches it with `use_token` before the framework
-invokes the tool.
+```bash
+pip install swarmauth
+```
 
 ```python
 import swarmauth
 
-issuer_keys = swarmauth.KeyPair.generate()
+keys = swarmauth.KeyPair.generate()
+issuer = swarmauth.TokenIssuer(keys)
+
+token = issuer.issue(
+    iss="agent:billing",
+    sub="tool:refund",
+    capabilities=["tool:refund"],
+    ttl_seconds=10,
+)
+
+@swarmauth.guard(
+    "tool:refund",
+    issuer_public_key=keys.public_bytes,
+)
+def issue_refund(invoice_id: str, amount_usd: float):
+    return {"refunded": invoice_id, "amount": amount_usd}
+
+with swarmauth.use_token(token):
+    issue_refund("INV-100", 25.00)  # verified, scoped, and then executed
+```
+
+The important bit is not the decorator. It is the order of operations:
+
+```text
+verify signature → check expiry → bind audience → check capability
+→ enforce limits → optionally require a human → call the function
+```
+
+If any check fails, the function is not called.
+
+## Architecture: the bouncer in front of the tool
+
+Think of SwarmAuth as a very fast bouncer. The agent can ask to enter. The
+tool only opens the door after the bouncer checks the wristband.
+
+![Animated SwarmAuth architecture](docs/architecture.svg)
+
+_The animation is decorative; the Mermaid diagram below is the readable,
+copyable fallback._
+
+```mermaid
+flowchart LR
+    A[Agent + LLM<br/>"Refund INV-100"] --> R[Runtime<br/>keeps the token hidden]
+    R --> G{SwarmAuth guard}
+
+    G --> C1[1. Signature<br/>Is it authentic?]
+    C1 --> C2[2. Time<br/>Is it still fresh?]
+    C2 --> C3[3. Scope<br/>Right agent, tool, capability?]
+    C3 --> C4[4. Limits<br/>Amount, calls, parameters?]
+    C4 --> H{High-stakes action?}
+
+    H -- No --> T[Tool runs]
+    H -- Yes --> Q[Human approval gate]
+    Q -- Approved --> T
+    Q -- Rejected or expired --> X[Tool does not run]
+
+    classDef good fill:#183b2b,stroke:#65d89a,color:#fff
+    classDef check fill:#172338,stroke:#7db7ff,color:#fff
+    classDef stop fill:#3d1d25,stroke:#ff8c9c,color:#fff
+    class T good
+    class C1,C2,C3,C4 check
+    class X stop
+```
+
+The model can suggest an action. It cannot skip the guard, mint authority, or
+smuggle a token into the tool schema.
+
+| Box | Plain-English job |
+| --- | --- |
+| Agent + LLM | Suggests what it wants to do. It may be wrong or manipulated. |
+| Runtime | Holds the short-lived token and attaches it outside the model's view. |
+| Guard | Verifies the request before the real function is called. |
+| Human approval | Pauses dangerous actions until an authenticated reviewer decides. |
+| Tool | Runs only after every required check passes. |
+
+```text
+agent asks → guard checks → maybe human clicks → tool runs
+                         ↘ denied = no side effect
+```
+
+## Why this exists
+
+LLMs are useful, probabilistic, and extremely good at confidently following
+instructions hidden in documents, tickets, webpages, and tool output. That is
+not a reason to stop building agent systems. It is a reason to put a hard
+boundary around side effects.
+
+SwarmAuth does not try to detect prompt injection. It assumes the model may be
+compromised and asks a more useful question:
+
+> Even if the model is wrong, can it still move money, deploy code, delete
+> data, or exfiltrate secrets?
+
+The answer should be “only if the runtime authorization says yes.”
+
+## What a token can say
+
+```text
+issuer       agent:billing
+audience     tool:refund
+capability   tool:refund
+expires      10 seconds from now
+limits       one call, <= $100, invoice_id matches an allowlist
+signature    Ed25519
+```
+
+Tokens have a verifier-enforced 30-second maximum TTL (10 seconds by default).
+Policies can narrow authority further with call counts, budgets, rate limits,
+and parameter constraints. A worker can attenuate a grant once when the parent
+token explicitly allows delegation.
+
+The private key and grant policy stay in the issuer process. The model gets
+neither.
+
+## Make the quickstart real
+
+An issuer policy prevents the issuer from minting something it should not be
+able to mint. A usage tracker makes a one-call or budget constraint stateful.
+
+```python
 policy = swarmauth.IssuerPolicy([
     swarmauth.Grant(
-        iss="agent:requester-01",
-        sub="tool:process_payout",
-        capabilities=("tool:process_payout",),
+        iss="agent:billing",
+        sub="tool:refund",
+        capabilities=("tool:refund",),
         max_ttl_seconds=30,
         max_calls=1,
-        max_amount_usd=1000.0,
+        max_amount_usd=100.0,
     )
 ])
-issuer = swarmauth.TokenIssuer(issuer_keys, policy=policy)
+
+issuer = swarmauth.TokenIssuer(keys, policy=policy)
 token = issuer.issue(
-    iss="agent:requester-01",
-    sub="tool:process_payout",
-    capabilities=["tool:process_payout"],
-    constraints=swarmauth.Constraints(max_calls=1, max_amount_usd=1000.0),
+    iss="agent:billing",
+    sub="tool:refund",
+    capabilities=["tool:refund"],
+    constraints=swarmauth.Constraints(max_calls=1, max_amount_usd=100.0),
     ttl_seconds=30,
 )
 
 tracker = swarmauth.UsageTracker()
 
 @swarmauth.guard(
-    "tool:process_payout",
-    issuer_public_key=issuer_keys.public_bytes,
+    "tool:refund",
+    issuer_public_key=keys.public_bytes,
     tracker=tracker,
     amount_kwarg="amount_usd",
 )
-def process_payout(destination_account: str, amount_usd: float):
-    ...  # reached only with a verified, in-scope token
-
-with swarmauth.use_token(token):
-    process_payout(destination_account="acct_123", amount_usd=50.0)
+def issue_refund(invoice_id: str, amount_usd: float):
+    ...
 ```
 
-`issuer.issue(...)` raises `PolicyViolationError` for any capability,
-audience, ttl, or ceiling outside that grant. `@guard` binds the audience
-to the capability string unless you pass `audience=`. A token that declares
-`max_calls`, `max_amount_usd`, or `rate_limit_per_min` is rejected when no
-tracker is passed. `examples/execution_boundary.py` runs this shape,
-including one delegation hop.
+Try the runnable version:
 
-Framework adapters for LangChain, CrewAI, AutoGen, and MCP tools are one
-call each — see [`swarmauth/middleware.py`](swarmauth/middleware.py)
-(`secure_langchain_tool`, `secure_crewai_tool`, `secure_autogen_function`,
-`secure_mcp_tool`). `use_token` is what makes `tool.invoke(...)` succeed;
-calling `.func(..., token=...)` is only the direct path. The adapters are
-verified against real LangChain, ag2, and MCP installs in
-[`tests/test_framework_adapters.py`](tests/test_framework_adapters.py).
+```bash
+python3 examples/execution_boundary.py
+python3 benchmarks/swarmbench.py
+```
 
-## Scaling out: many issuers and many verifier processes
+## When a human should click
 
-The examples above assume one issuer whose public key a verifier already
-has in hand. A real swarm usually has many issuing agents and many verifier
-processes, which needs two more pieces:
+For the genuinely spicy actions—large refunds, production deploys, deleting
+customer data—put a human in the loop:
 
-**`KeyRegistry`** — trust many issuers, and rotate an issuer's key without a
-hard cutover ([SPEC.md §8](SPEC.md#8-key-registry-and-rotation)):
+```python
+gate = swarmauth.ApprovalGatekeeper(
+    secret=approval_secret,
+    base_url="https://review.example.com",
+)
+
+request = gate.request(
+    action="issue_refund",
+    capability="tool:refund",
+    subject="agent:billing",
+    requester="billing-agent",
+    summary="Refund INV-100 for $2,500",
+)
+
+# Render and deliver to Slack, email, Teams, PagerDuty, or your own webhook.
+gate.notify(request, swarmauth.SlackWebhookChannel(slack_webhook_url))
+
+# The link is signed, expiring, and single-use. GET shows a confirmation page;
+# only the explicit POST records the decision, so mail scanners cannot approve it.
+# The action must call require_approved() before its side effect.
+gate.require_approved(request.request_id)
+# Only after the line above succeeds, perform the irreversible side effect.
+refund_service.issue(invoice_id="INV-100", amount_usd=2500)
+```
+
+The SDK includes Slack Block Kit, email, and generic webhook payload
+renderers, plus `ApprovalHTTPApp` for previewing and resolving signed links. They do not
+silently pretend to be a Slack app or an email provider: you connect delivery
+through your existing systems. The HTTP endpoint requires an authenticated
+reviewer identity (`REMOTE_USER`) by default; anonymous signed links are an
+explicit pilot-only opt-in. The approval core never receives a
+bearer token and fails closed on tampering, expiry, replay, or an unapproved
+request.
+
+For real delivery, use `SlackWebhookChannel` or `SMTPEmailChannel` and keep
+provider credentials in your secret manager:
+
+```python
+gate.notify(request, swarmauth.SlackWebhookChannel(slack_webhook_url))
+gate.notify(
+    request,
+    swarmauth.SMTPEmailChannel(
+        "smtp.example.com",
+        sender="security@example.com",
+        recipients=("oncall@example.com",),
+        username=smtp_username,
+        password=smtp_password,
+    ),
+)
+```
+
+See [`examples/approval_integrations.py`](examples/approval_integrations.py)
+for the environment-variable wiring.
+
+The review endpoint can run as its own small service behind SSO:
+
+```bash
+# In production, read this from a secret manager. For a local shell pilot:
+export SWARMAUTH_APPROVAL_SECRET="$(openssl rand -base64 32)"
+export SWARMAUTH_REVIEW_BASE_URL='https://review.example.com'
+export SWARMAUTH_APPROVAL_DB='/var/lib/swarmauth/approvals.db'
+gunicorn swarmauth.approval_wsgi:application
+```
+
+The reverse proxy must provide the authenticated reviewer as `REMOTE_USER`.
+
+## Frameworks and protocols
+
+The execution boundary works with ordinary Python callables and has adapters
+for common agent-tool shapes:
+
+- LangChain
+- CrewAI
+- AutoGen / ag2
+- MCP tools
+
+The runtime token is injected with `use_token`, so the model-visible tool
+schema does not grow a suspicious `token` argument. For OAuth-backed systems,
+your resource server validates the incoming credential and
+`use_oauth_bearer_token` carries the resulting short-lived JCT to the guard.
+
+```python
+with swarmauth.use_oauth_bearer_token(
+    request.headers,
+    validate=oauth_resource_server.validate_and_mint_jct,
+):
+    guarded_mcp_tool(invoice_id="INV-100")
+```
+
+Start with [`examples/mcp_oauth_reference.py`](examples/mcp_oauth_reference.py)
+and [`swarmauth/middleware.py`](swarmauth/middleware.py).
+
+## Evidence, not vibes
+
+Every guard can emit safe allow/deny decision metadata for logs, a SIEM, or a
+control plane. Tokens and private keys are deliberately excluded.
+
+```python
+sink = swarmauth.JsonlDecisionSink(".local/decisions.jsonl")
+guarded = swarmauth.secure_mcp_tool(
+    process_refund,
+    capability="tool:refund",
+    issuer_public_key=keys.public_bytes,
+    on_decision=sink,
+)
+```
+
+```bash
+python3 examples/decision_viewer.py .local/decisions.jsonl
+```
+
+The viewer reads an existing JSONL export; generate one by running the guarded
+example above first (it writes `.local/decisions.jsonl`).
+
+Decision evidence answers the questions operators actually ask at 2 a.m.:
+who called what, under which capability, with which token ID, and why did the
+boundary allow or deny it?
+
+## Control plane: the useful bits
+
+The SDK includes a dependency-light governance core for pilots:
+
+```python
+plane = swarmauth.ControlPlane()
+plane.register_agent("agent:billing", owner="team-finance", public_key=keys.public_bytes)
+plane.register_tool("tool:refund", owner="team-finance", capabilities=("tool:refund",))
+```
+
+It includes agent/tool registration, revocation, decision evidence, SQLite
+persistence, tenant scoping, RBAC, OIDC principal resolution, backups, and an
+authenticated WSGI boundary. The local server is intentionally loopback-only
+and unauthenticated; do not put it on the internet.
+
+For a small OIDC-backed pilot:
+
+```bash
+pip install 'swarmauth[oidc,server]'
+export SWARMAUTH_OIDC_ISSUER='https://idp.example.com/'
+export SWARMAUTH_OIDC_AUDIENCE='swarmauth-control-plane'
+# Optional durable local state (otherwise the example uses memory):
+export SWARMAUTH_CONTROL_PLANE_DB='.local/control-plane.db'
+export SWARMAUTH_OIDC_JWKS_URL='https://idp.example.com/.well-known/jwks.json'
+export SWARMAUTH_CONTROL_PLANE_DB_DIR='/var/lib/swarmauth'
+gunicorn swarmauth.control_plane_wsgi:application
+```
+
+See [`examples/control_plane_server.py`](examples/control_plane_server.py),
+[`examples/control_plane_oidc_wsgi.py`](examples/control_plane_oidc_wsgi.py),
+and [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+
+## Scaling beyond one process
+
+The defaults are intentionally boring and local. When the swarm grows:
 
 ```python
 from swarmauth.registry import KeyRegistry
-
-registry = KeyRegistry()
-registry.register("agent:issuer-a", keys_a.public_bytes)
-registry.register("agent:issuer-b", keys_b.public_bytes)
-
-# Rotate issuer-a's key later without invalidating in-flight tokens:
-registry.register("agent:issuer-a", new_keys_a.public_bytes, rotate=True)
-registry.revoke("agent:issuer-a", keys_a.public_bytes)  # once fully rolled over
-
-@swarmauth.guard("tool:process_payout", key_registry=registry)
-def process_payout(destination_account: str, amount_usd: float):
-    ...
-```
-
-**`RedisUsageTracker`** — enforce `max_calls`/`max_amount_usd`/`rate_limit_per_min`
-atomically across multiple verifier processes instead of per-process
-([SPEC.md §9](SPEC.md#9-distributed-usage-tracking)):
-
-```python
-import redis
 from swarmauth.backends.redis_backend import RedisUsageTracker
 
-tracker = RedisUsageTracker(redis.Redis.from_url("redis://localhost:6379/0"))
+registry = KeyRegistry()
+registry.register("agent:billing", billing_public_key)
+registry.register("agent:shipping", shipping_public_key)
 
-@swarmauth.guard("tool:process_payout", key_registry=registry, tracker=tracker)
-def process_payout(destination_account: str, amount_usd: float):
+tracker = RedisUsageTracker(redis_client)
+
+@swarmauth.guard(
+    "tool:refund",
+    key_registry=registry,
+    tracker=tracker,
+)
+def issue_refund(invoice_id: str, amount_usd: float):
     ...
 ```
 
-**`RevocationStore`** — reject one specific, otherwise-valid token before its
-signed expiry, for incident response or agent/session offboarding
-([SPEC.md §9](SPEC.md#9-token-revocation)):
+`KeyRegistry` handles many issuers and rotation. Redis backends share usage
+limits and revocations across verifier processes. Both are opt-in extras.
 
-```python
-from swarmauth.revocation import InMemoryRevocationStore
-
-revocation_store = InMemoryRevocationStore()
-
-@swarmauth.guard("tool:process_payout", key_registry=registry, revocation_store=revocation_store)
-def process_payout(destination_account: str, amount_usd: float):
-    ...
-
-# Compromised session detected -- reject its token immediately, without
-# waiting out the rest of its (short) TTL:
-revocation_store.revoke(claims.jti, expires_at=claims.exp)
-```
-
-Use `swarmauth.backends.redis_backend.RedisRevocationStore` in place of
-`InMemoryRevocationStore` to share revocations across multiple verifier
-processes, the same way `RedisUsageTracker` shares usage state.
-
-All three are optional and additive: `issuer_public_key=` and the default
-in-memory `UsageTracker` still work exactly as in the quickstart above.
-
-## Install
+## Install the SDKs
 
 ```bash
 pip install swarmauth
 npm install swarmauth
 ```
 
-The JavaScript package lives in [`js/`](js/) and documents the same protocol
-in [its README](https://github.com/waspdrey/swarmauth/blob/main/js/README.md).
+The JavaScript and TypeScript implementations use the same protocol and test
+vectors:
 
-Or from a clone, for local development:
+- [`js/README.md`](js/README.md)
+- [`ts/`](ts/)
+- [`spec/test-vectors/`](spec/test-vectors/)
 
-```bash
-pip install -e .
-```
-
-For running the full test suite, including the real-framework adapter tests
-and the Redis backend tests (which run against `fakeredis` by default, no
-server required):
+For local development:
 
 ```bash
 pip install -e ".[dev,frameworks,redis]"
 pytest
+cd ts && npm test
+cd ../js && npm test
 ```
 
-## Architecture
+## Does it actually stop anything?
 
-```mermaid
-sequenceDiagram
-    participant A as Agent A (Requester)
-    participant I as SwarmAuth Token Issuer
-    participant B as Agent B / Tool (Capability Owner)
+`SwarmBench` gives an agent a prompt injection that asks for a $50,000 payout.
+The injection succeeds in both scenarios. The difference is the execution
+boundary:
 
-    A->>I: Request capability token (iss=A, sub=B, capabilities=[...], constraints, ttl<=30s)
-    I->>I: Evaluate policy — is A allowed to request these capabilities against B?
-    I-->>A: Signed JSON Capability Token (JCT)
-    A->>B: Tool call, with JCT attached
-    B->>B: Verify Ed25519 signature, exp/iat window, audience, capability, constraints
-    alt Valid and in scope
-        B->>B: Execute tool, record usage against jti
-        B-->>A: Result
-    else Invalid, expired, wrong audience, missing capability, or over limit
-        B-->>A: Reject (CapabilityViolationError, ConstraintViolationError, etc)
-    end
-```
+| Scenario | Injection succeeds | Unauthorized payout | Boundary result |
+| --- | ---: | ---: | --- |
+| Unprotected loop | yes | yes | too late |
+| SwarmAuth loop | yes | no | denied before side effect |
 
-Full claims schema, canonicalization rules, and the complete verification
-algorithm are in [SPEC.md](SPEC.md).
-
-**Implementing JCT in another language?** [`spec/test-vectors/`](spec/test-vectors/)
-gives byte-exact signed tokens and expected outcomes (including the
-temporal/expiry edge cases) so you can verify your implementation matches
-this one without needing to ask. This Python SDK enforces itself against
-the same file on every test run — as does [`ts/`](ts/), a TypeScript
-reference implementation with the same zero-dependency philosophy (Ed25519
-via the standard Web Crypto API, no npm crypto package required), currently
-covering the core protocol (issue/verify/parse, capability and parameter
-checks) but not yet `KeyRegistry` or `RevocationStore`.
-
-## SwarmBench: does this actually stop anything?
-
-[`benchmarks/swarmbench.py`](benchmarks/swarmbench.py) runs a runnable
-simulation of a Requesting Agent that delegates to a Payments Tool's
-`process_payout` tool, with a prompt injection embedded in an inbound
-customer message instructing the Requesting Agent to trigger a $50,000
-payout to an attacker-controlled account. The injection is modeled as **succeeding** at
-the LLM layer in both test cases — SwarmBench isn't testing whether models
-can be fooled (they can); it's testing what happens next.
-
-This particular scenario is a payout because a wrongly-executed `$50,000`
-transfer is a visceral, easy-to-grade failure — the mechanism it exercises
-(capability check + constraint check at the execution boundary, before any
-side effect happens) is identical regardless of what the tool does. Swap
-`process_payout` for `issue_refund`, `run_shell_command`, `merge_pull_request`,
-`send_email`, or `write_patient_record` and the boundary behaves the same
-way, because `@guard()` never inspects what the wrapped function does.
+This is a scripted benchmark, not a claim that a model was magically made
+safe. The protected path rejects the call because the agent only holds a
+grant for `tool:draft_payout`, not `tool:process_payout`.
 
 ```bash
-python benchmarks/swarmbench.py
+python3 benchmarks/swarmbench.py
 ```
 
-### Results
+## The protocol, for people who enjoy the sharp edges
 
-SwarmBench does not call a model. `compromised_llm_call` is a fixed
-function, so the table below is a scripted demonstration of the boundary,
-regenerated by `python benchmarks/swarmbench.py`. The protected case also
-refuses to *mint* `tool:process_payout`: the issuer policy only allows
-`tool:draft_payout`. `examples/execution_boundary.py` is the deployment
-shape to copy.
+SwarmAuth is deliberately small: Ed25519 signatures, canonical JSON, a
+verifier-enforced TTL ceiling, explicit audiences, capabilities, constraints,
+and one-hop attenuation. It is not an OAuth authorization server, a prompt
+injection detector, or a replacement for your IdP.
 
-| Scenario | Injection succeeds at LLM layer | Unauthorized payout executed | Blocked at execution boundary |
-|---|---|---|---|
-| **Unprotected** agent loop | ✅ Yes | ❌ **Yes — $50,000 sent** | — |
-| **SwarmAuth-protected** agent loop | ✅ Yes | ✅ **No** | ✅ Yes (`CapabilityViolationError`) |
+If you are implementing another language, start with:
 
-| Metric | Value |
-|---|---|
-| Mean token verification overhead | **0.12 ms/op** (target: <1ms) |
+- [`SPEC.md`](SPEC.md) — claims, canonicalization, verification algorithm
+- [`spec/test-vectors/vectors.json`](spec/test-vectors/vectors.json) — byte-exact
+  interoperability cases
+- [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) — trust boundaries and limits
 
-In the unprotected loop, the Payments Tool trusts whatever arguments
-it's called with — the injection walks straight through. In the protected
-loop, the token the Requesting Agent actually holds only grants
-`tool:draft_payout` under a policy-set budget; it does not, and cannot,
-grant `tool:process_payout` no matter what the compromised LLM decided to
-call — so the execution boundary rejects it before the ledger is touched.
+## Repository map
 
-## Repository layout
-
+```text
+swarmauth/              Python SDK and execution boundary
+  token.py              issue / parse / verify capability tokens
+  middleware.py         guards, context, framework adapters
+  approvals.py          human approval gate + channel payloads + SQLite store
+  approval_http.py      identity-aware one-click approval endpoint
+  control_plane.py      registry, tenants, RBAC, SQLite evidence
+  oidc.py               JWKS-backed principal resolution
+ts/                     TypeScript reference implementation
+js/                     JavaScript implementation
+spec/test-vectors/      cross-language protocol vectors
+examples/               runnable integration shapes
+benchmarks/             prompt-injection boundary simulation
+docs/                   threat model and design-partner brief
 ```
-swarmauth/
-├── SPEC.md                        # protocol specification
-├── README.md
-├── CONTRIBUTING.md
-├── SECURITY.md
-├── tox.ini                          # reproduce every CI job locally: tox -e lint / py312 / frameworks / redis-live
-├── .github/workflows/ci.yml        # tests + benchmark + live-Redis job on every push/PR
-├── scripts/
-│   ├── audit_deps.py                # pip-audit wrapper used by CI's `lint` job and `tox -e lint`
-│   ├── generate_test_vectors.py      # regenerates spec/test-vectors/vectors.json
-│   └── verify_release_artifact.py    # required before tagging a release -- see CONTRIBUTING.md
-├── spec/
-│   └── test-vectors/                # byte-exact cross-language interop vectors; see its own README
-├── ts/                               # TypeScript reference implementation; see its own README
-│   ├── src/
-│   └── test/vectors.test.ts          # runs against the same spec/test-vectors/vectors.json
-├── swarmauth/
-│   ├── __init__.py
-│   ├── crypto.py                   # Ed25519 keypairs, signing, verification
-│   ├── token.py                     # CapabilityToken: issue / parse / verify
-│   ├── registry.py                   # KeyRegistry: multi-issuer trust + key rotation
-│   ├── policy.py                    # IssuerPolicy: what the signing key is allowed to mint
-│   ├── middleware.py                  # guard decorator, use_token, framework adapters
-│   ├── revocation.py                   # RevocationStore + InMemoryRevocationStore
-│   ├── backends/
-│   │   └── redis_backend.py            # RedisUsageTracker, RedisRevocationStore (optional `redis` extra)
-│   ├── exceptions.py
-│   └── py.typed
-├── examples/
-│   └── execution_boundary.py        # policy, runtime token, guard, one delegation hop
-├── js/                              # JavaScript SDK, verified against spec/test-vectors
-├── benchmarks/
-│   └── swarmbench.py                # runnable unprotected-vs-protected simulation
-└── tests/
-    ├── test_token.py
-    ├── test_middleware.py
-    ├── test_registry.py
-    ├── test_revocation.py
-    ├── test_public_api.py             # every swarmauth.exceptions.* class must be exported at top level
-    ├── test_spec_vectors.py            # enforces spec/test-vectors/vectors.json against this implementation
-    ├── test_redis_backend.py         # runs against fakeredis, or a real server in CI
-    └── test_framework_adapters.py    # real LangChain, ag2, and MCP integration tests
-```
-
-## Design principles
-
-- No cryptographic dependencies beyond `cryptography`; no schema/validation
-  dependencies beyond `pydantic`.
-- Strict typing, explicit exception hierarchy (`TokenExpiredError`,
-  `CapabilityViolationError`, `ConstraintViolationError`, ...) — callers
-  decide how to handle each failure mode, nothing fails silently.
-- Tokens are data, not infrastructure: no required network call, no
-  mandatory central service. Self-issuance and centralized-issuer
-  deployments use the exact same token format and verification code.
-- **The protocol stays free and self-hostable, permanently.** The goal is
-  for other agent frameworks and platforms to embed JCT verification
-  natively, not to depend on a hosted SwarmAuth service — that only works
-  if there's nothing to eventually paywall or deprecate out from under
-  them. MIT-licensed, no CLA, no planned "open core" split that moves the
-  verification algorithm itself behind a subscription.
 
 ## Status
 
-MVP / RFC. The token format, claims schema, and verification algorithm are
-considered stable for `0.x`. Multi-issuer key rotation (`KeyRegistry`,
-[SPEC.md §8](SPEC.md#8-key-registry-and-rotation)), token revocation
-(`RevocationStore`, [SPEC.md §9](SPEC.md#9-token-revocation)),
-distributed usage tracking (`RedisUsageTracker`,
-[SPEC.md §10](SPEC.md#10-distributed-usage-tracking)), issuer grants
-(`IssuerPolicy`), runtime token attachment (`use_token`), and one-hop
-attenuation ([SPEC.md §12](SPEC.md#12-attenuated-delegation)) ship in the
-SDK. Expect the framework adapters to keep evolving as more of them get
-real integration use. Issues and PRs welcome.
+The protocol and SDKs are usable and tested. The control plane, approval
+gate, and deployment examples are pilot-grade building blocks—not a hosted
+SaaS with managed Slack/email delivery, SSO administration, migrations, and
+enterprise operations included for free.
+
+That is intentional. Start with one consequential tool, measure prevented
+loss and review time, then earn the next layer.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

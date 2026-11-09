@@ -10,10 +10,12 @@ import {
   AudienceMismatchError,
   CapabilityViolationError,
   ConstraintViolationError,
+  DelegationError,
   InvalidSignatureError,
   MalformedTokenError,
   TokenExpiredError,
   TokenNotYetValidError,
+  UnknownIssuerError,
 } from "./errors.js";
 
 export const TOKEN_TYPE = "JCT";
@@ -44,6 +46,8 @@ export interface CapabilityClaims {
   iat: number;
   exp: number;
   jti: string;
+  dlg?: string;
+  prf?: string;
 }
 
 interface Header {
@@ -59,6 +63,18 @@ function generateJti(): string {
 }
 
 function normalizeConstraints(c?: Constraints): NormalizedConstraints {
+  for (const [name, value] of Object.entries(c ?? {})) {
+    if (value === undefined) continue;
+    if (name === "maxAmountUsd") {
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        throw new RangeError("maxAmountUsd must be a finite, non-negative number");
+      }
+    } else if (name === "maxCalls" || name === "rateLimitPerMin") {
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+        throw new RangeError(`${name} must be a non-negative integer`);
+      }
+    }
+  }
   return {
     maxCalls: c?.maxCalls ?? null,
     maxAmountUsd: c?.maxAmountUsd ?? null,
@@ -72,7 +88,7 @@ function normalizeConstraints(c?: Constraints): NormalizedConstraints {
 // (SPEC.md §3.3/§3.4): snake_case keys, nulls (not omission) for unset
 // optional constraint fields.
 function claimsToWireJson(claims: CapabilityClaims): JsonValue {
-  return {
+  const wire: Record<string, JsonValue> = {
     iss: claims.iss,
     sub: claims.sub,
     capabilities: claims.capabilities,
@@ -86,6 +102,9 @@ function claimsToWireJson(claims: CapabilityClaims): JsonValue {
     exp: claims.exp,
     jti: claims.jti,
   };
+  if (claims.dlg !== undefined) wire.dlg = claims.dlg;
+  if (claims.prf !== undefined) wire.prf = claims.prf;
+  return wire;
 }
 
 function wireJsonToClaims(payload: unknown): CapabilityClaims {
@@ -106,20 +125,29 @@ function wireJsonToClaims(payload: unknown): CapabilityClaims {
   if (typeof p.iat !== "number" || typeof p.exp !== "number") {
     throw new MalformedTokenError("'iat'/'exp' must be numbers");
   }
+  for (const key of ["dlg", "prf"] as const) {
+    if (p[key] !== undefined && (typeof p[key] !== "string" || p[key].length === 0)) {
+      throw new MalformedTokenError(`'${key}' must be a non-empty string when present`);
+    }
+  }
   const c = (p.constraints ?? {}) as Record<string, unknown>;
+  const constraints = {
+    maxCalls: (c.max_calls as number | null | undefined) ?? null,
+    maxAmountUsd: (c.max_amount_usd as number | null | undefined) ?? null,
+    rateLimitPerMin: (c.rate_limit_per_min as number | null | undefined) ?? null,
+    allowedParams: (c.allowed_params as Record<string, JsonValue> | undefined) ?? {},
+  };
+  normalizeConstraints({ maxCalls: constraints.maxCalls ?? undefined, maxAmountUsd: constraints.maxAmountUsd ?? undefined, rateLimitPerMin: constraints.rateLimitPerMin ?? undefined });
   return {
     iss: p.iss,
     sub: p.sub,
     capabilities: p.capabilities as string[],
-    constraints: {
-      maxCalls: (c.max_calls as number | null | undefined) ?? null,
-      maxAmountUsd: (c.max_amount_usd as number | null | undefined) ?? null,
-      rateLimitPerMin: (c.rate_limit_per_min as number | null | undefined) ?? null,
-      allowedParams: (c.allowed_params as Record<string, JsonValue> | undefined) ?? {},
-    },
+    constraints,
     iat: p.iat,
     exp: p.exp,
     jti: p.jti,
+    ...(p.dlg === undefined ? {} : { dlg: p.dlg as string }),
+    ...(p.prf === undefined ? {} : { prf: p.prf as string }),
   };
 }
 
@@ -200,26 +228,121 @@ export function parse(token: string): ParsedToken {
 }
 
 export interface VerifyOptions {
-  issuerPublicKey: Uint8Array;
+  issuerPublicKey?: Uint8Array;
+  registry?: KeyRegistry;
   audience?: string;
   leewaySeconds?: number;
 }
 
+export class KeyRegistry {
+  private readonly roots = new Map<string, Uint8Array[]>();
+  private readonly holders = new Map<string, Uint8Array[]>();
+
+  register(iss: string, publicKey: Uint8Array): void {
+    this.roots.set(iss, [new Uint8Array(publicKey)]);
+  }
+
+  registerHolder(iss: string, publicKey: Uint8Array): void {
+    this.holders.set(iss, [new Uint8Array(publicKey)]);
+  }
+
+  keysFor(iss: string, holder = false): Uint8Array[] {
+    const keys = (holder ? this.holders : this.roots).get(iss);
+    if (!keys?.length) throw new UnknownIssuerError(`No trusted key registered for '${iss}'`);
+    return keys;
+  }
+}
+
+function sameKey(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function kidBytes(header: Header): Uint8Array {
+  if (typeof header.kid !== "string" || header.kid.length === 0) {
+    throw new MalformedTokenError("Token header is missing kid");
+  }
+  const raw = b64urlDecode(header.kid);
+  if (raw.length !== 32) throw new MalformedTokenError("Token kid is not a 32-byte Ed25519 public key");
+  return raw;
+}
+
+async function verifySignatureAndKid(
+  header: Header,
+  claims: CapabilityClaims,
+  signingInput: Uint8Array,
+  signature: Uint8Array,
+  options: VerifyOptions,
+  holder: boolean,
+): Promise<void> {
+  const kid = kidBytes(header);
+  if (options.registry) {
+    const trusted = options.registry.keysFor(claims.iss, holder);
+    if (!trusted.some((key) => sameKey(key, kid))) {
+      throw new InvalidSignatureError(`Token kid is not a trusted key for issuer '${claims.iss}'`);
+    }
+    if (!(await verifySignature(kid, signingInput, signature))) {
+      throw new InvalidSignatureError("Ed25519 signature verification failed");
+    }
+    return;
+  }
+  if (holder) throw new DelegationError("Delegated tokens require a key registry containing the root issuer and delegate");
+  if (!options.issuerPublicKey) throw new TypeError("Pass exactly one of issuerPublicKey or registry");
+  if (!sameKey(options.issuerPublicKey, kid)) {
+    throw new InvalidSignatureError("Token kid does not match the trusted issuer public key");
+  }
+  if (!(await verifySignature(options.issuerPublicKey, signingInput, signature))) {
+    throw new InvalidSignatureError("Ed25519 signature verification failed");
+  }
+}
+
+function capabilityCovered(capability: string, granted: string[]): boolean {
+  return granted.some((item) => item === capability || (item.endsWith(":*") && capability.startsWith(item.slice(0, -1))));
+}
+
+function limitIsWider(child: number | null, parent: number | null): boolean {
+  return parent !== null && (child === null || child > parent);
+}
+
+function assertAttenuated(parent: CapabilityClaims, child: CapabilityClaims): void {
+  if (parent.prf || !parent.dlg || parent.dlg !== child.iss) throw new DelegationError("Parent token does not authorize this delegate");
+  if (child.dlg || child.sub !== parent.sub || child.iat < parent.iat || child.exp > parent.exp) {
+    throw new DelegationError("Attenuated token widens or changes the parent grant");
+  }
+  if (child.capabilities.some((capability) => !capabilityCovered(capability, parent.capabilities))) {
+    throw new DelegationError("Attenuated token capability exceeds the parent grant");
+  }
+  for (const name of ["maxCalls", "maxAmountUsd", "rateLimitPerMin"] as const) {
+    if (limitIsWider(child.constraints[name], parent.constraints[name])) {
+      throw new DelegationError(`Attenuated ${name} widens the parent limit`);
+    }
+  }
+  for (const [key, expected] of Object.entries(parent.constraints.allowedParams)) {
+    if (JSON.stringify(child.constraints.allowedParams[key]) !== JSON.stringify(expected)) {
+      throw new DelegationError(`Attenuated token drops or changes pinned parameter '${key}'`);
+    }
+  }
+}
+
 /** Fully verify a token: signature, TTL ceiling, expiry, and (optionally) audience.
  *
- * KeyRegistry (multi-issuer trust/rotation) and RevocationStore are not yet
- * ported to this reference implementation -- see ts/README.md's roadmap.
- * Only the single-issuer-key path (Python's `issuer_public_key=`) exists
- * here so far.
+ * Supports either a single trusted issuer key or a KeyRegistry for root and
+ * delegated holder keys. RevocationStore remains outside this reference
+ * implementation; callers should enforce revocation before execution.
  */
 export async function verify(token: string, options: VerifyOptions): Promise<CapabilityClaims> {
+  if ((options.issuerPublicKey === undefined) === (options.registry === undefined)) {
+    throw new TypeError("Pass exactly one of issuerPublicKey or registry");
+  }
   const leewaySeconds = options.leewaySeconds ?? 2;
-  const { header, claims, signingInput } = parse(token);
+  const preview = parse(token);
+  const { header, claims, signingInput } = preview;
   const sigB64 = token.split(".")[2] as string;
   const signature = b64urlDecode(sigB64);
 
-  const ok = await verifySignature(options.issuerPublicKey, signingInput, signature);
-  if (!ok) throw new InvalidSignatureError("Ed25519 signature verification failed");
+  if (claims.prf && !options.registry) {
+    throw new DelegationError("Delegated tokens require a key registry containing the root issuer and delegate");
+  }
+  await verifySignatureAndKid(header, claims, signingInput, signature, options, Boolean(claims.prf));
 
   if (claims.exp - claims.iat > MAX_TTL_SECONDS) {
     throw new TokenExpiredError(`Token TTL ${claims.exp - claims.iat}s exceeds max ${MAX_TTL_SECONDS}s`);
@@ -235,6 +358,26 @@ export async function verify(token: string, options: VerifyOptions): Promise<Cap
 
   if (options.audience !== undefined && claims.sub !== options.audience) {
     throw new AudienceMismatchError(`Token audience '${claims.sub}' does not match '${options.audience}'`);
+  }
+
+  if (claims.prf) {
+    const parentParsed = parse(claims.prf);
+    if (parentParsed.claims.prf) throw new DelegationError("Delegation chains are limited to one hop");
+    const parentSignature = b64urlDecode(claims.prf.split(".")[2] as string);
+    await verifySignatureAndKid(
+      parentParsed.header,
+      parentParsed.claims,
+      parentParsed.signingInput,
+      parentSignature,
+      options,
+      false,
+    );
+    if (parentParsed.claims.exp - parentParsed.claims.iat > MAX_TTL_SECONDS) {
+      throw new TokenExpiredError("Parent token TTL exceeds maximum");
+    }
+    assertAttenuated(parentParsed.claims, claims);
+  } else if (claims.dlg) {
+    throw new DelegationError("A delegable token cannot be presented as an execution credential");
   }
 
   return claims;
