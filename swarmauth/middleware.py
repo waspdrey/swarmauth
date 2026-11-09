@@ -15,9 +15,10 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator, Optional, TypeVar
+from typing import Any, Callable, Iterator, Mapping, Optional, TypeVar
 
 from swarmauth.crypto import KeyPair
+from swarmauth.events import AuthorizationDecision, DecisionSink
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
 from swarmauth.policy import IssuerPolicy
 from swarmauth.registry import KeyRegistry
@@ -49,6 +50,43 @@ def use_token(token: str) -> Iterator[None]:
         yield
     finally:
         _current_token.reset(reset)
+
+
+def bearer_token_from_headers(headers: Mapping[str, str]) -> str:
+    """Extract a JCT bearer token after an OAuth/resource-server boundary validates it.
+
+    SwarmAuth does not implement an OAuth authorization server. This small bridge lets
+    an MCP or HTTP adapter pass the resource server's bearer credential into the same
+    execution context without exposing it in the tool schema.
+    """
+    value = next((value for key, value in headers.items() if key.lower() == "authorization"), "")
+    scheme, separator, token = value.partition(" ")
+    if scheme.lower() != "bearer" or not separator or not token.strip() or " " in token.strip():
+        raise ValueError("expected a single Authorization: Bearer <token> header")
+    return token.strip()
+
+
+@contextmanager
+def use_bearer_token(headers: Mapping[str, str]) -> Iterator[None]:
+    """Attach the bearer JCT from validated HTTP/MCP request headers to a tool call."""
+    with use_token(bearer_token_from_headers(headers)):
+        yield
+
+
+@contextmanager
+def use_oauth_bearer_token(headers: Mapping[str, str], *, validate: Callable[[str], str]) -> Iterator[None]:
+    """Validate an OAuth bearer credential and attach the resulting JCT.
+
+    ``validate`` is the deployment's OAuth resource-server adapter. It receives
+    the raw bearer credential and must return the short-lived SwarmAuth JCT after
+    checking issuer, audience, scopes, and the on-behalf-of identity. Keeping
+    this callback explicit prevents SwarmAuth from pretending to be an OAuth AS
+    while providing a concrete integration seam for real providers.
+    """
+    raw = bearer_token_from_headers(headers)
+    jct = validate(raw)
+    with use_token(jct):
+        yield
 
 
 def _validated_amount(amount: Any) -> float:
@@ -240,6 +278,7 @@ def verify_and_check(
     amount: float = 0.0,
     params: Optional[dict[str, Any]] = None,
     tracker: Optional[UsageTracker] = None,
+    on_decision: Optional[DecisionSink] = None,
 ) -> CapabilityClaims:
     """Verify a token's signature/expiry/audience, check capability + constraints,
     and (if a tracker is given) atomically record usage against it.
@@ -252,38 +291,59 @@ def verify_and_check(
     it is the actual execution boundary, independent of whatever the calling
     agent's LLM decided to do.
     """
-    claims = CapabilityToken.verify(
-        token,
-        issuer_public_key=issuer_public_key,
-        key_registry=key_registry,
-        revocation_store=revocation_store,
-        audience=audience,
-    )
-
-    if required_capability is not None:
-        check_capability(claims, required_capability)
-
-    if params is not None:
-        check_params(claims, params)
-
-    stateful = [
-        name
-        for name, value in (
-            ("max_calls", claims.constraints.max_calls),
-            ("max_amount_usd", claims.constraints.max_amount_usd),
-            ("rate_limit_per_min", claims.constraints.rate_limit_per_min),
-        )
-        if value is not None
-    ]
-    if stateful and tracker is None:
-        raise ConstraintViolationError(
-            f"Token declares {', '.join(stateful)} but no usage tracker was provided",
-            constraint=stateful[0],
+    try:
+        claims = CapabilityToken.verify(
+            token,
+            issuer_public_key=issuer_public_key,
+            key_registry=key_registry,
+            revocation_store=revocation_store,
+            audience=audience,
         )
 
-    if tracker is not None:
-        tracker.check_and_record(claims, amount=_validated_amount(amount))
+        if required_capability is not None:
+            check_capability(claims, required_capability)
 
+        if params is not None:
+            check_params(claims, params)
+
+        stateful = [
+            name
+            for name, value in (
+                ("max_calls", claims.constraints.max_calls),
+                ("max_amount_usd", claims.constraints.max_amount_usd),
+                ("rate_limit_per_min", claims.constraints.rate_limit_per_min),
+            )
+            if value is not None
+        ]
+        if stateful and tracker is None:
+            raise ConstraintViolationError(
+                f"Token declares {', '.join(stateful)} but no usage tracker was provided",
+                constraint=stateful[0],
+            )
+
+        if tracker is not None:
+            tracker.check_and_record(claims, amount=_validated_amount(amount))
+    except Exception as exc:
+        if on_decision is not None:
+            on_decision(
+                AuthorizationDecision.denied(
+                    capability=required_capability,
+                    audience=audience,
+                    reason=f"{type(exc).__name__}: {exc}",
+                )
+            )
+        raise
+
+    if on_decision is not None:
+        on_decision(
+            AuthorizationDecision.allowed(
+                capability=required_capability,
+                audience=audience,
+                issuer=claims.iss,
+                subject=claims.sub,
+                jti=claims.jti,
+            )
+        )
     return claims
 
 
@@ -297,6 +357,7 @@ def guard(
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
     amount_kwarg: Optional[str] = None,
+    on_decision: Optional[DecisionSink] = None,
 ) -> Callable[[F], F]:
     """Execution-boundary guard: decorate a tool function so it verifies a
     JSON Capability Token before running, e.g. `@swarmauth.guard("tool:x", ...)`.
@@ -341,6 +402,7 @@ def guard(
                 amount=amount,
                 params=params,
                 tracker=tracker,
+                on_decision=on_decision,
             )
             return func(*args, **kwargs)
 
@@ -381,6 +443,7 @@ def secure_tool_call(
     tracker: Optional[UsageTracker] = None,
     token_kwarg: str = "token",
     amount_kwarg: Optional[str] = None,
+    on_decision: Optional[DecisionSink] = None,
 ) -> Callable[..., Any]:
     """Framework-agnostic helper: wrap any callable (a LangChain tool's `func=`,
     a CrewAI `Tool`'s callable, an AutoGen registered function, or a plain
@@ -402,6 +465,7 @@ def secure_tool_call(
         tracker=tracker,
         token_kwarg=token_kwarg,
         amount_kwarg=amount_kwarg,
+        on_decision=on_decision,
     )(func)
 
 

@@ -62,3 +62,7 @@ export class ConstraintViolationError extends SwarmAuthError {
     super(message);
   }
 }
+
+export class DelegationError extends SwarmAuthError {
+  readonly code = "DELEGATION_VIOLATION";
+}

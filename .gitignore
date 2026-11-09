@@ -9,3 +9,6 @@ build/
 .mypy_cache/
 .ruff_cache/
 node_modules/
+
+# Local product strategy and execution notes; never commit these.
+.product/

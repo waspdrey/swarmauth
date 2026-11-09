@@ -1,10 +1,31 @@
 """SwarmAuth: OAuth 2.1-style capability delegation for autonomous AI agent swarms."""
 
+from swarmauth.approval_http import ApprovalHTTPApp
+from swarmauth.approvals import (
+    ApprovalChannel,
+    ApprovalGatekeeper,
+    ApprovalRequest,
+    ApprovalStateError,
+    ApprovalTokenError,
+    EmailApprovalChannel,
+    InMemoryApprovalStore,
+    SlackApprovalChannel,
+    SlackWebhookChannel,
+    SMTPEmailChannel,
+    SQLiteApprovalStore,
+    WebhookApprovalChannel,
+)
+from swarmauth.control_plane import AgentRecord, ControlPlane, Principal, SQLiteControlPlane, TenantControlPlane, ToolRecord
+from swarmauth.control_plane_http import ControlPlaneHTTPApp, PrincipalResolver
 from swarmauth.crypto import KeyPair
+from swarmauth.events import AuthorizationDecision, DecisionSink, JsonlDecisionSink
 from swarmauth.exceptions import (
+    ApprovalError,
     AudienceMismatchError,
     CapabilityViolationError,
     ConstraintViolationError,
+    ControlPlaneAccessError,
+    ControlPlaneAuthenticationError,
     DelegationError,
     InvalidSignatureError,
     MalformedTokenError,
@@ -15,7 +36,18 @@ from swarmauth.exceptions import (
     TokenRevokedError,
     UnknownIssuerError,
 )
-from swarmauth.middleware import TokenIssuer, UsageTracker, guard, use_token
+from swarmauth.middleware import (
+    TokenIssuer,
+    UsageTracker,
+    bearer_token_from_headers,
+    guard,
+    secure_mcp_tool,
+    secure_tool_call,
+    use_bearer_token,
+    use_oauth_bearer_token,
+    use_token,
+)
+from swarmauth.oidc import OIDCPrincipalResolver
 from swarmauth.policy import Grant, IssuerPolicy
 from swarmauth.revocation import InMemoryRevocationStore, RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability
@@ -24,6 +56,31 @@ __version__ = "0.1.7"
 
 __all__ = [
     "KeyPair",
+    "ControlPlane",
+    "AgentRecord",
+    "ToolRecord",
+    "SQLiteControlPlane",
+    "Principal",
+    "TenantControlPlane",
+    "ControlPlaneAccessError",
+    "ControlPlaneAuthenticationError",
+    "ApprovalError",
+    "ApprovalChannel",
+    "ApprovalGatekeeper",
+    "ApprovalRequest",
+    "ApprovalStateError",
+    "ApprovalTokenError",
+    "EmailApprovalChannel",
+    "SMTPEmailChannel",
+    "InMemoryApprovalStore",
+    "SQLiteApprovalStore",
+    "SlackApprovalChannel",
+    "SlackWebhookChannel",
+    "WebhookApprovalChannel",
+    "ControlPlaneHTTPApp",
+    "ApprovalHTTPApp",
+    "PrincipalResolver",
+    "OIDCPrincipalResolver",
     "TokenIssuer",
     "guard",
     "CapabilityToken",
@@ -48,5 +105,13 @@ __all__ = [
     "use_token",
     "Grant",
     "IssuerPolicy",
+    "AuthorizationDecision",
+    "DecisionSink",
+    "JsonlDecisionSink",
+    "bearer_token_from_headers",
+    "use_bearer_token",
+    "use_oauth_bearer_token",
+    "secure_tool_call",
+    "secure_mcp_tool",
     "__version__",
 ]
