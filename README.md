@@ -62,6 +62,51 @@ verify signature → check expiry → bind audience → check capability
 
 If any check fails, the function is not called.
 
+## Architecture: the bouncer in front of the tool
+
+Think of SwarmAuth as a very fast bouncer. The agent can ask to enter. The
+tool only opens the door after the bouncer checks the wristband.
+
+```mermaid
+flowchart LR
+    A[Agent + LLM<br/>"Refund INV-100"] --> R[Runtime<br/>keeps the token hidden]
+    R --> G{SwarmAuth guard}
+
+    G --> C1[1. Signature<br/>Is it authentic?]
+    C1 --> C2[2. Time<br/>Is it still fresh?]
+    C2 --> C3[3. Scope<br/>Right agent, tool, capability?]
+    C3 --> C4[4. Limits<br/>Amount, calls, parameters?]
+    C4 --> H{High-stakes action?}
+
+    H -- No --> T[Tool runs]
+    H -- Yes --> Q[Human approval gate]
+    Q -- Approved --> T
+    Q -- Rejected or expired --> X[Tool does not run]
+
+    classDef good fill:#183b2b,stroke:#65d89a,color:#fff
+    classDef check fill:#172338,stroke:#7db7ff,color:#fff
+    classDef stop fill:#3d1d25,stroke:#ff8c9c,color:#fff
+    class T good
+    class C1,C2,C3,C4 check
+    class X stop
+```
+
+The model can suggest an action. It cannot skip the guard, mint authority, or
+smuggle a token into the tool schema.
+
+| Box | Plain-English job |
+| --- | --- |
+| Agent + LLM | Suggests what it wants to do. It may be wrong or manipulated. |
+| Runtime | Holds the short-lived token and attaches it outside the model's view. |
+| Guard | Verifies the request before the real function is called. |
+| Human approval | Pauses dangerous actions until an authenticated reviewer decides. |
+| Tool | Runs only after every required check passes. |
+
+```text
+agent asks → guard checks → maybe human clicks → tool runs
+                         ↘ denied = no side effect
+```
+
 ## Why this exists
 
 LLMs are useful, probabilistic, and extremely good at confidently following
