@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-09
+
+### Added
+
+- Agent and tool control plane with SQLite persistence, tenant scoping, RBAC,
+  authenticated WSGI access, trust registration, key revocation, and decision
+  evidence.
+- High-stakes human approval gates with signed expiring links, Slack, email,
+  webhook delivery, and an approval HTTP endpoint.
+- Control-plane and approval examples, threat model, design-partner brief, and
+  an approachable architecture guide.
+
 ### Changed
 
 - **Breaking: the token lifetime ceiling is now 30 seconds, down from 300.**
@@ -173,6 +185,7 @@ Initial release.
   `secure_autogen_function`, `secure_mcp_tool` — each a thin, dependency-free
   wrapper tested against real LangChain, ag2, and MCP installs.
 
+[0.1.8]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.8
 [0.1.7]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.7
 [0.1.6]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.6
 [0.1.5]: https://github.com/waspdrey/swarmauth/releases/tag/v0.1.5
