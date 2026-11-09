@@ -52,7 +52,7 @@ from swarmauth.policy import Grant, IssuerPolicy
 from swarmauth.revocation import InMemoryRevocationStore, RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 __all__ = [
     "KeyPair",
