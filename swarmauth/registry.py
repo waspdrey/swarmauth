@@ -74,6 +74,16 @@ class KeyRegistry:
             existing = [key for key in self._holders.get(iss, []) if key != public_key]
             self._holders[iss] = [public_key, *existing]
 
+    def replace(self, iss: str, public_key: bytes, *, holder: bool) -> None:
+        """Replace an issuer's trust role and remove the superseded namespace."""
+        with self._lock:
+            if holder:
+                self._keys.pop(iss, None)
+                self._holders[iss] = [public_key]
+            else:
+                self._holders.pop(iss, None)
+                self._keys[iss] = [public_key]
+
     def revoke_holder(self, iss: str, public_key: bytes) -> None:
         """Stop trusting `public_key` as a delegation holder for `iss`."""
         with self._lock:

@@ -13,6 +13,7 @@ import json
 import secrets
 import smtplib
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -128,6 +129,7 @@ class SQLiteApprovalStore:
     """Durable approval store with compare-and-set decisions."""
 
     def __init__(self, path: str) -> None:
+        self._lock = threading.RLock()
         self._database = sqlite3.connect(path, check_same_thread=False)
         self._database.execute("PRAGMA journal_mode=WAL")
         self._database.execute(
@@ -147,67 +149,73 @@ class SQLiteApprovalStore:
         self._database.commit()
 
     def create(self, request: ApprovalRequest) -> None:
-        try:
-            self._database.execute(
-                "INSERT INTO approval_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    request.request_id,
-                    request.action,
-                    request.capability,
-                    request.subject,
-                    request.requester,
-                    request.summary,
-                    request.expires_at,
-                    request.status,
-                    request.approver,
-                    request.decided_at,
-                ),
-            )
-            self._database.commit()
-        except sqlite3.IntegrityError as exc:
-            raise ApprovalStateError("approval request already exists") from exc
+        with self._lock:
+            try:
+                self._database.execute(
+                    "INSERT INTO approval_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        request.request_id,
+                        request.action,
+                        request.capability,
+                        request.subject,
+                        request.requester,
+                        request.summary,
+                        request.expires_at,
+                        request.status,
+                        request.approver,
+                        request.decided_at,
+                    ),
+                )
+                self._database.commit()
+            except sqlite3.IntegrityError as exc:
+                raise ApprovalStateError("approval request already exists") from exc
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
-        row = self._database.execute(
-            "SELECT request_id, action, capability, subject, requester, summary, expires_at, status, approver, decided_at "
-            "FROM approval_requests WHERE request_id = ?",
-            (request_id,),
-        ).fetchone()
-        return self._from_row(row) if row is not None else None
+        with self._lock:
+            row = self._database.execute(
+                "SELECT request_id, action, capability, subject, requester, summary, expires_at, status, approver, decided_at "
+                "FROM approval_requests WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            return self._from_row(row) if row is not None else None
 
     def decide(self, request_id: str, status: str, approver: str, now: int) -> ApprovalRequest:
         if status not in {"approved", "rejected"}:
             raise ApprovalStateError("invalid approval state")
-        try:
-            self._database.execute("BEGIN IMMEDIATE")
-            current = self.get(request_id)
-            if current is None:
-                raise ApprovalStateError("approval request not found")
-            if current.status != "pending":
-                raise ApprovalStateError("approval request was already decided")
-            if now >= current.expires_at:
-                self._database.execute("UPDATE approval_requests SET status = 'expired' WHERE request_id = ?", (request_id,))
+        with self._lock:
+            try:
+                self._database.execute("BEGIN IMMEDIATE")
+                current = self.get(request_id)
+                if current is None:
+                    raise ApprovalStateError("approval request not found")
+                if current.status != "pending":
+                    raise ApprovalStateError("approval request was already decided")
+                if now >= current.expires_at:
+                    self._database.execute("UPDATE approval_requests SET status = 'expired' WHERE request_id = ?", (request_id,))
+                    self._database.commit()
+                    raise ApprovalStateError("approval request has expired")
+                cursor = self._database.execute(
+                    "UPDATE approval_requests SET status = ?, approver = ?, decided_at = ? "
+                    "WHERE request_id = ? AND status = 'pending'",
+                    (status, approver, now, request_id),
+                )
+                if cursor.rowcount != 1:
+                    raise ApprovalStateError("approval request was already decided")
                 self._database.commit()
-                raise ApprovalStateError("approval request has expired")
-            self._database.execute(
-                "UPDATE approval_requests SET status = ?, approver = ?, decided_at = ? "
-                "WHERE request_id = ? AND status = 'pending'",
-                (status, approver, now, request_id),
-            )
-            self._database.commit()
-        except ApprovalStateError:
-            self._database.rollback()
-            raise
-        except Exception:
-            self._database.rollback()
-            raise
-        result = self.get(request_id)
-        if result is None:
-            raise ApprovalStateError("approval request disappeared")
-        return result
+                result = self.get(request_id)
+                if result is None:
+                    raise ApprovalStateError("approval request disappeared")
+                return result
+            except ApprovalStateError:
+                self._database.rollback()
+                raise
+            except Exception:
+                self._database.rollback()
+                raise
 
     def close(self) -> None:
-        self._database.close()
+        with self._lock:
+            self._database.close()
 
     @staticmethod
     def _from_row(row: tuple[object, ...]) -> ApprovalRequest:

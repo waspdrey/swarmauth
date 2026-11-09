@@ -78,3 +78,21 @@ def test_tenant_control_plane_enforces_tenant_and_roles() -> None:
         tenant.register_tool(viewer, "tool:x", owner="team-a", capabilities=("tool:x",))
     with pytest.raises(swarmauth.ControlPlaneAccessError):
         tenant.agents(other_tenant)
+
+
+def test_re_registering_agent_replaces_root_and_holder_trust(tmp_path) -> None:
+    database = tmp_path / "trust-role.db"
+    root = swarmauth.KeyPair.generate()
+    holder = swarmauth.KeyPair.generate()
+    plane = swarmauth.SQLiteControlPlane(str(database))
+    plane.register_agent("agent:x", owner="team", public_key=root.public_bytes, holder=False)
+    plane.register_agent("agent:x", owner="team", public_key=holder.public_bytes, holder=True)
+    with pytest.raises(swarmauth.UnknownIssuerError):
+        plane.registry.keys_for("agent:x")
+    assert plane.registry.holder_keys_for("agent:x") == [holder.public_bytes]
+    plane.close()
+    restarted = swarmauth.SQLiteControlPlane(str(database))
+    with pytest.raises(swarmauth.UnknownIssuerError):
+        restarted.registry.keys_for("agent:x")
+    assert restarted.registry.holder_keys_for("agent:x") == [holder.public_bytes]
+    restarted.close()

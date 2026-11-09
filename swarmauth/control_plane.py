@@ -106,10 +106,7 @@ class ControlPlane:
         if not agent_id or not owner:
             raise ValueError("agent_id and owner are required")
         with self._lock:
-            if holder:
-                self.registry.register_holder(agent_id, public_key)
-            else:
-                self.registry.register(agent_id, public_key)
+            self.registry.replace(agent_id, public_key, holder=holder)
             record = AgentRecord(agent_id, owner)
             self._agents[agent_id] = record
             return record
@@ -247,49 +244,73 @@ class SQLiteControlPlane(ControlPlane):
             )
 
     def register_agent(self, agent_id: str, *, owner: str, public_key: bytes, holder: bool = False) -> AgentRecord:
-        record = super().register_agent(agent_id, owner=owner, public_key=public_key, holder=holder)
-        self._database.execute(
-            "INSERT INTO agents VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(agent_id) DO UPDATE SET owner=excluded.owner, "
-            "active=excluded.active, public_key=excluded.public_key, holder=excluded.holder",
-            (agent_id, owner, int(record.active), bytes(public_key), int(holder)),
-        )
-        self._database.commit()
-        return record
+        with self._lock:
+            self._database.execute("BEGIN IMMEDIATE")
+            try:
+                record = super().register_agent(agent_id, owner=owner, public_key=public_key, holder=holder)
+                self._database.execute(
+                    "INSERT INTO agents VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT(agent_id) DO UPDATE SET owner=excluded.owner, "
+                    "active=excluded.active, public_key=excluded.public_key, holder=excluded.holder",
+                    (agent_id, owner, int(record.active), bytes(public_key), int(holder)),
+                )
+                self._database.commit()
+                return record
+            except Exception:
+                self._database.rollback()
+                raise
 
     def register_tool(self, tool_id: str, *, owner: str, capabilities: tuple[str, ...]) -> ToolRecord:
-        record = super().register_tool(tool_id, owner=owner, capabilities=capabilities)
-        self._database.execute(
-            "INSERT INTO tools VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(tool_id) DO UPDATE SET owner=excluded.owner, "
-            "capabilities=excluded.capabilities, active=excluded.active",
-            (tool_id, owner, json.dumps(list(capabilities)), int(record.active)),
-        )
-        self._database.commit()
-        return record
+        with self._lock:
+            self._database.execute("BEGIN IMMEDIATE")
+            try:
+                record = super().register_tool(tool_id, owner=owner, capabilities=capabilities)
+                self._database.execute(
+                    "INSERT INTO tools VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(tool_id) DO UPDATE SET owner=excluded.owner, "
+                    "capabilities=excluded.capabilities, active=excluded.active",
+                    (tool_id, owner, json.dumps(list(capabilities)), int(record.active)),
+                )
+                self._database.commit()
+                return record
+            except Exception:
+                self._database.rollback()
+                raise
 
     def revoke_agent(self, agent_id: str) -> None:
-        super().revoke_agent(agent_id)
-        self._database.execute("UPDATE agents SET active=0 WHERE agent_id=?", (agent_id,))
-        self._database.commit()
+        with self._lock:
+            self._database.execute("BEGIN IMMEDIATE")
+            try:
+                super().revoke_agent(agent_id)
+                self._database.execute("UPDATE agents SET active=0 WHERE agent_id=?", (agent_id,))
+                self._database.commit()
+            except Exception:
+                self._database.rollback()
+                raise
 
     def record_decision(self, decision: AuthorizationDecision) -> None:
-        super().record_decision(decision)
-        self._database.execute(
-            "INSERT INTO decisions (timestamp, outcome, capability, audience, issuer, subject, jti, reason) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                decision.timestamp,
-                decision.outcome,
-                decision.capability,
-                decision.audience,
-                decision.issuer,
-                decision.subject,
-                decision.jti,
-                decision.reason,
-            ),
-        )
-        self._database.commit()
+        with self._lock:
+            self._database.execute("BEGIN IMMEDIATE")
+            try:
+                super().record_decision(decision)
+                self._database.execute(
+                    "INSERT INTO decisions (timestamp, outcome, capability, audience, issuer, subject, jti, reason) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        decision.timestamp,
+                        decision.outcome,
+                        decision.capability,
+                        decision.audience,
+                        decision.issuer,
+                        decision.subject,
+                        decision.jti,
+                        decision.reason,
+                    ),
+                )
+                self._database.commit()
+            except Exception:
+                self._database.rollback()
+                raise
 
     def decisions(
         self,
