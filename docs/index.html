@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>SwarmAuth Protocol Specification</title>
-<meta name="description" content="SwarmAuth: a compact, signed Capability Token (JCT) format and verification protocol for agent-to-agent and agent-to-tool authorization." />
+<title>SwarmAuth</title>
+<meta name="description" content="SwarmAuth: execution-boundary authorization for AI agents." />
 <link rel="icon" href="data:,">
 <style>
   :root {
@@ -73,7 +73,7 @@
 <body>
 <header>
   <div class="inner">
-    <h1>SwarmAuth Protocol</h1>
+    <h1>SwarmAuth</h1>
     <nav>
       <a href="https://github.com/waspdrey/swarmauth">GitHub</a>
       <a href="https://pypi.org/project/swarmauth/">PyPI</a>
@@ -83,10 +83,10 @@
   </div>
 </header>
 <main>
-  <div id="content"><p class="loading">Loading spec…</p></div>
+  <div id="content"><p class="loading">Loading README…</p></div>
 </main>
 <footer>
-  Rendered from <a href="https://github.com/waspdrey/swarmauth/blob/main/SPEC.md">SPEC.md</a> in the SwarmAuth repository.
+  Rendered from <a href="https://github.com/waspdrey/swarmauth/blob/main/README.md">README.md</a> in the SwarmAuth repository.
   This page has no build step: it fetches that file directly and renders it client-side, so it can never drift out of sync.
 </footer>
 
@@ -102,7 +102,7 @@
 (async () => {
   const contentEl = document.getElementById("content");
   try {
-    const res = await fetch("./spec.md", { cache: "no-store" });
+    const res = await fetch("./README.md", { cache: "no-store" });
     if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
     const markdown = await res.text();
 
@@ -150,7 +150,7 @@
       requestAnimationFrame(() => requestAnimationFrame(() => target?.scrollIntoView()));
     }
   } catch (err) {
-    contentEl.innerHTML = `<p class="error">Failed to load SPEC.md: ${String(err)}. Read it directly on <a href="https://github.com/waspdrey/swarmauth/blob/main/SPEC.md">GitHub</a> instead.</p>`;
+    contentEl.innerHTML = `<p class="error">Failed to load README.md: ${String(err)}. Read it directly on <a href="https://github.com/waspdrey/swarmauth/blob/main/README.md">GitHub</a> instead.</p>`;
   }
 })();
 </script>

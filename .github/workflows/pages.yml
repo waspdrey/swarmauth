@@ -1,16 +1,16 @@
-name: Deploy spec site to GitHub Pages
+name: Deploy SwarmAuth site to GitHub Pages
 
-# docs/index.html fetches spec.md at runtime and renders it client-side
+# docs/index.html fetches README.md at runtime and renders it client-side
 # (marked.js + mermaid.js, pinned versions with SRI). This workflow's only
-# job is to assemble that spec.md fresh from the current SPEC.md on every
-# deploy -- SPEC.md itself is never duplicated into a committed file, so
-# there is nothing here that can drift out of sync with it.
+# job assembles README.md and SPEC.md fresh from main on every deploy, so the
+# rendered README and its protocol links stay in sync with the repository.
 
 on:
   push:
     branches: [main]
     paths:
       - "SPEC.md"
+      - "README.md"
       - "docs/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
@@ -35,7 +35,8 @@ jobs:
           mkdir -p _site
           cp docs/index.html _site/index.html
           cp docs/.nojekyll _site/.nojekyll
-          cp SPEC.md _site/spec.md
+          cp README.md _site/README.md
+          cp SPEC.md _site/SPEC.md
 
       - uses: actions/upload-pages-artifact@v3
         with:
