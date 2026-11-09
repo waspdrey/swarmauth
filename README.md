@@ -67,6 +67,11 @@ If any check fails, the function is not called.
 Think of SwarmAuth as a very fast bouncer. The agent can ask to enter. The
 tool only opens the door after the bouncer checks the wristband.
 
+![Animated SwarmAuth architecture](docs/architecture.svg)
+
+_The animation is decorative; the Mermaid diagram below is the readable,
+copyable fallback._
+
 ```mermaid
 flowchart LR
     A[Agent + LLM<br/>"Refund INV-100"] --> R[Runtime<br/>keeps the token hidden]
