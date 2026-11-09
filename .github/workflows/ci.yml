@@ -17,10 +17,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      # [dev,redis] so mypy can resolve swarmauth.backends.redis_backend
+      # [dev,redis,oidc] so mypy can resolve optional library integrations
+      # checked as part of the package, including redis and PyJWT.
       # against the real redis-py types, not just the TYPE_CHECKING stub name.
       - name: Install swarmauth (dev + redis)
-        run: pip install -e ".[dev,redis]"
+        run: pip install -e ".[dev,redis,oidc]"
 
       - name: Ruff (lint)
         run: ruff check swarmauth tests
