@@ -74,26 +74,16 @@ copyable fallback._
 
 ```mermaid
 flowchart LR
-    A[Agent + LLM<br/>"Refund INV-100"] --> R[Runtime<br/>keeps the token hidden]
-    R --> G{SwarmAuth guard}
-
-    G --> C1[1. Signature<br/>Is it authentic?]
-    C1 --> C2[2. Time<br/>Is it still fresh?]
-    C2 --> C3[3. Scope<br/>Right agent, tool, capability?]
-    C3 --> C4[4. Limits<br/>Amount, calls, parameters?]
-    C4 --> H{High-stakes action?}
-
-    H -- No --> T[Tool runs]
-    H -- Yes --> Q[Human approval gate]
-    Q -- Approved --> T
-    Q -- Rejected or expired --> X[Tool does not run]
-
-    classDef good fill:#183b2b,stroke:#65d89a,color:#fff
-    classDef check fill:#172338,stroke:#7db7ff,color:#fff
-    classDef stop fill:#3d1d25,stroke:#ff8c9c,color:#fff
-    class T good
-    class C1,C2,C3,C4 check
-    class X stop
+    A[Agent] --> R[Runtime keeps token hidden]
+    R --> G[SwarmAuth guard]
+    G --> S[Verify signature]
+    S --> E[Check expiry and audience]
+    E --> L[Enforce capability and limits]
+    L --> H{Human approval needed?}
+    H -->|No| T[Tool executes]
+    H -->|Yes| Q[Reviewer approves]
+    Q --> T
+    Q --> X[Rejected: no side effect]
 ```
 
 The model can suggest an action. It cannot skip the guard, mint authority, or
