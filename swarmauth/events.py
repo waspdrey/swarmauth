@@ -40,8 +40,17 @@ class AuthorizationDecision:
         return cls(time.time(), "allow", capability, audience, issuer, subject, jti)
 
     @classmethod
-    def denied(cls, *, capability: Optional[str], audience: Optional[str], reason: str) -> "AuthorizationDecision":
-        return cls(time.time(), "deny", capability, audience, None, None, None, reason)
+    def denied(
+        cls,
+        *,
+        capability: Optional[str],
+        audience: Optional[str],
+        reason: str,
+        issuer: Optional[str] = None,
+        subject: Optional[str] = None,
+        jti: Optional[str] = None,
+    ) -> "AuthorizationDecision":
+        return cls(time.time(), "deny", capability, audience, issuer, subject, jti, reason)
 
 
 class DecisionSink(Protocol):

@@ -1,8 +1,8 @@
 """Loopback-only control-plane pilot API.
 
 This is intentionally a local integration harness, not a production service:
-it has no authentication, persistence, tenancy, or RBAC. It demonstrates the
-HTTP shape a hosted control plane can grow behind.
+it has no authentication, tenancy, or RBAC. Set ``SWARMAUTH_CONTROL_PLANE_DB``
+to a SQLite path when you want state to survive restarts; omit it for memory.
 
     python examples/control_plane_server.py
 """

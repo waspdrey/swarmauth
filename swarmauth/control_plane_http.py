@@ -71,6 +71,9 @@ class ControlPlaneHTTPApp:
                     capabilities=tuple(str(item) for item in body["capabilities"]),
                 )
                 return self._respond(start_response, 201, asdict(tool_record))
+            if method == "DELETE" and path.startswith("/agents/") and path.count("/") == 2:
+                scoped.revoke_agent(principal, path.split("/", 2)[2])
+                return self._respond(start_response, 204, None)
             return self._respond(start_response, 404, {"error": "not_found"})
         except ControlPlaneAuthenticationError as exc:
             return self._respond(start_response, 401, {"error": exc.code})
@@ -103,9 +106,9 @@ class ControlPlaneHTTPApp:
 
     @staticmethod
     def _respond(start_response: Callable[..., Any], status: int, value: Any) -> list[bytes]:
-        body = json.dumps(value, sort_keys=True).encode("utf-8")
+        body = b"" if status == 204 else json.dumps(value, sort_keys=True).encode("utf-8")
         phrase = {
-            200: "OK", 201: "Created", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found"
+            200: "OK", 201: "Created", 204: "No Content", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found"
         }[status]
         start_response(
             f"{status} {phrase}",

@@ -291,6 +291,7 @@ def verify_and_check(
     it is the actual execution boundary, independent of whatever the calling
     agent's LLM decided to do.
     """
+    claims: Optional[CapabilityClaims] = None
     try:
         claims = CapabilityToken.verify(
             token,
@@ -325,11 +326,18 @@ def verify_and_check(
             tracker.check_and_record(claims, amount=_validated_amount(amount))
     except Exception as exc:
         if on_decision is not None:
+            reason = type(exc).__name__
+            constraint = getattr(exc, "constraint", None)
+            if constraint:
+                reason = f"{reason}:{constraint}"
             on_decision(
                 AuthorizationDecision.denied(
                     capability=required_capability,
                     audience=audience,
-                    reason=f"{type(exc).__name__}: {exc}",
+                    reason=reason,
+                    issuer=claims.iss if claims is not None else None,
+                    subject=claims.sub if claims is not None else None,
+                    jti=claims.jti if claims is not None else None,
                 )
             )
         raise
@@ -386,6 +394,10 @@ def guard(
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             token = kwargs.pop(token_kwarg, None) or _current_token.get()
             if not token:
+                if on_decision is not None:
+                    on_decision(AuthorizationDecision.denied(
+                        capability=capability, audience=bound_audience, reason="MissingToken"
+                    ))
                 raise CapabilityViolationError(
                     f"No JCT supplied (expected kwarg '{token_kwarg}' or use_token())", required=capability
                 )

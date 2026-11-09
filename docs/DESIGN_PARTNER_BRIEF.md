@@ -27,7 +27,9 @@ In one working session, protect one high-risk tool call so that:
 
 ## Integration shape
 
-- Python or TypeScript agent/tool runtime;
+- Python or TypeScript agent/tool runtime; Python uses the SDK directly and
+  TypeScript uses the matching `@swarmauth/core` token verifier at its own
+  execution boundary;
 - MCP or ordinary HTTP tool transport;
 - existing OAuth/OIDC provider remains the identity source;
 - SwarmAuth is the action-authorization and execution-boundary layer;
@@ -71,7 +73,7 @@ In one working session, protect one high-risk tool call so that:
 | Time to protect first tool | ≤ 1 working day | engineer log |
 | Unauthorized action blocked | 100% of test cases | adversarial test report |
 | Token exposure in model schema | 0 occurrences | schema snapshot |
-| Decision completeness | 100% of decisions have outcome, actor, tool, capability, and JTI | decision export |
+| Decision completeness | 100% of decisions have outcome, actor, tool, and capability; JTI is present whenever a token was supplied | decision export |
 | Revocation response | next request denied without code deployment | incident test |
 | Added authorization latency | p95 < 10 ms excluding network calls | benchmark |
 | False denials | 0 in agreed happy-path suite | replayed workload |

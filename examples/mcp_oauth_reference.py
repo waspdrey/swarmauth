@@ -20,8 +20,17 @@ import swarmauth
 def main() -> None:
     try:
         from mcp.server.mcpserver import MCPServer
-    except ImportError as exc:
-        raise SystemExit("Install the optional MCP dependency with: pip install -e '.[frameworks]'") from exc
+        server = MCPServer("swarmauth-oauth-reference")
+        list_tools = server.list_tools
+    except ImportError:
+        try:
+            from mcp.server.fastmcp import FastMCP
+        except ImportError as exc:
+            raise SystemExit("Install the optional MCP dependency with: pip install -e '.[frameworks]'") from exc
+        server = FastMCP("swarmauth-oauth-reference")
+
+        async def list_tools():
+            return await server._tool_manager.list_tools()  # type: ignore[attr-defined]
 
     issuer_keys = swarmauth.KeyPair.generate()
     issuer = swarmauth.TokenIssuer(issuer_keys)
@@ -37,14 +46,18 @@ def main() -> None:
         issuer_public_key=issuer_keys.public_bytes,
         on_decision=decisions.append,
     )
-    server = MCPServer("swarmauth-oauth-reference")
     server.tool()(guarded)
 
     # MCP builds the schema from the wrapped function's original signature.
     # The bearer token is therefore not an LLM-controlled tool argument.
-    tools = asyncio.run(server.list_tools())
-    assert [tool.name for tool in tools] == ["process_refund"]
-    assert "token" not in tools[0].input_schema.get("properties", {})
+    tools = asyncio.run(list_tools())
+    if isinstance(tools, dict):
+        tools = list(tools.values())
+    if [tool.name for tool in tools] != ["process_refund"]:
+        raise RuntimeError("MCP server did not register process_refund")
+    schema = getattr(tools[0], "inputSchema", getattr(tools[0], "input_schema", {}))
+    if "token" in schema.get("properties", {}):
+        raise RuntimeError("authorization token leaked into the MCP tool schema")
 
     token = issuer.issue(
         iss="agent:support",
@@ -56,15 +69,18 @@ def main() -> None:
     # resource server/introspection endpoint and return the JCT minted for the
     # validated principal. This local adapter stands in for that provider.
     def validate_oauth_access_token(access_token: str) -> str:
-        assert access_token == "oauth-access-token"
+        if access_token != "oauth-access-token":
+            raise ValueError("unexpected OAuth access token")
         return token
 
     request_headers = {"Authorization": "Bearer oauth-access-token"}
     with swarmauth.use_oauth_bearer_token(request_headers, validate=validate_oauth_access_token):
-        assert guarded(invoice_id="INV-100", amount_usd=25.0) == "refunded 25.0 for INV-100"
+        result = guarded(invoice_id="INV-100", amount_usd=25.0)
+        if result != "refunded 25.0 for INV-100":
+            raise RuntimeError("guarded MCP invocation returned an unexpected result")
 
-    assert decisions[-1].outcome == "allow"
-    assert decisions[-1].jti is not None
+    if decisions[-1].outcome != "allow" or decisions[-1].jti is None:
+        raise RuntimeError("MCP invocation did not emit an attributable allow decision")
     print("MCP/OAuth execution-boundary reference: ok")
 
 

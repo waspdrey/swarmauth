@@ -50,6 +50,10 @@ issued for that action.
 - Approval resolution trusts only the identity injected by the authenticated
   WSGI/reverse-proxy boundary; client-supplied identity headers are ignored.
 - Unknown issuers and untrusted holder keys fail closed.
+- If `allow_anonymous_links=True` is enabled for the approval HTTP app, the
+  signed, expiring link itself is treated as the reviewer credential. This is
+  a controlled-pilot exception; production deployments should keep it false
+  and put the endpoint behind SSO.
 
 ## Security testing strategy
 

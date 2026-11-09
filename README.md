@@ -211,15 +211,18 @@ request = gate.request(
 )
 
 # Render and deliver to Slack, email, Teams, PagerDuty, or your own webhook.
-gate.notify(request, swarmauth.SlackApprovalChannel())
+gate.notify(request, swarmauth.SlackWebhookChannel(slack_webhook_url))
 
-# The link is signed, expiring, and single-use.
+# The link is signed, expiring, and single-use. GET shows a confirmation page;
+# only the explicit POST records the decision, so mail scanners cannot approve it.
 # The action must call require_approved() before its side effect.
 gate.require_approved(request.request_id)
+# Only after the line above succeeds, perform the irreversible side effect.
+refund_service.issue(invoice_id="INV-100", amount_usd=2500)
 ```
 
 The SDK includes Slack Block Kit, email, and generic webhook payload
-renderers, plus `ApprovalHTTPApp` for resolving the signed link. They do not
+renderers, plus `ApprovalHTTPApp` for previewing and resolving signed links. They do not
 silently pretend to be a Slack app or an email provider: you connect delivery
 through your existing systems. The HTTP endpoint requires an authenticated
 reviewer identity (`REMOTE_USER`) by default; anonymous signed links are an
@@ -250,7 +253,8 @@ for the environment-variable wiring.
 The review endpoint can run as its own small service behind SSO:
 
 ```bash
-export SWARMAUTH_APPROVAL_SECRET='use-a-secret-manager-and-32-plus-random-bytes'
+# In production, read this from a secret manager. For a local shell pilot:
+export SWARMAUTH_APPROVAL_SECRET="$(openssl rand -base64 32)"
 export SWARMAUTH_REVIEW_BASE_URL='https://review.example.com'
 export SWARMAUTH_APPROVAL_DB='/var/lib/swarmauth/approvals.db'
 gunicorn swarmauth.approval_wsgi:application
@@ -303,6 +307,9 @@ guarded = swarmauth.secure_mcp_tool(
 python3 examples/decision_viewer.py .local/decisions.jsonl
 ```
 
+The viewer reads an existing JSONL export; generate one by running the guarded
+example above first (it writes `.local/decisions.jsonl`).
+
 Decision evidence answers the questions operators actually ask at 2 a.m.:
 who called what, under which capability, with which token ID, and why did the
 boundary allow or deny it?
@@ -328,6 +335,8 @@ For a small OIDC-backed pilot:
 pip install 'swarmauth[oidc,server]'
 export SWARMAUTH_OIDC_ISSUER='https://idp.example.com/'
 export SWARMAUTH_OIDC_AUDIENCE='swarmauth-control-plane'
+# Optional durable local state (otherwise the example uses memory):
+export SWARMAUTH_CONTROL_PLANE_DB='.local/control-plane.db'
 export SWARMAUTH_OIDC_JWKS_URL='https://idp.example.com/.well-known/jwks.json'
 export SWARMAUTH_CONTROL_PLANE_DB_DIR='/var/lib/swarmauth'
 gunicorn swarmauth.control_plane_wsgi:application

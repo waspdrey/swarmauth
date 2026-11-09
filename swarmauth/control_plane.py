@@ -245,8 +245,17 @@ class SQLiteControlPlane(ControlPlane):
 
     def register_agent(self, agent_id: str, *, owner: str, public_key: bytes, holder: bool = False) -> AgentRecord:
         with self._lock:
+            old_record = self._agents.get(agent_id)
+            old_roots, old_holders = self.registry.snapshot(agent_id)
             self._database.execute("BEGIN IMMEDIATE")
             try:
+                durable = self._database.execute(
+                    "SELECT active FROM agents WHERE agent_id = ?", (agent_id,)
+                ).fetchone()
+                if durable is not None and not bool(durable[0]):
+                    raise ControlPlaneAccessError(
+                        "agent is revoked; create a new agent ID before restoring trust"
+                    )
                 record = super().register_agent(agent_id, owner=owner, public_key=public_key, holder=holder)
                 self._database.execute(
                     "INSERT INTO agents VALUES (?, ?, ?, ?, ?) "
@@ -258,10 +267,16 @@ class SQLiteControlPlane(ControlPlane):
                 return record
             except Exception:
                 self._database.rollback()
+                self.registry.restore(agent_id, old_roots, old_holders)
+                if old_record is None:
+                    self._agents.pop(agent_id, None)
+                else:
+                    self._agents[agent_id] = old_record
                 raise
 
     def register_tool(self, tool_id: str, *, owner: str, capabilities: tuple[str, ...]) -> ToolRecord:
         with self._lock:
+            old_record = self._tools.get(tool_id)
             self._database.execute("BEGIN IMMEDIATE")
             try:
                 record = super().register_tool(tool_id, owner=owner, capabilities=capabilities)
@@ -275,10 +290,16 @@ class SQLiteControlPlane(ControlPlane):
                 return record
             except Exception:
                 self._database.rollback()
+                if old_record is None:
+                    self._tools.pop(tool_id, None)
+                else:
+                    self._tools[tool_id] = old_record
                 raise
 
     def revoke_agent(self, agent_id: str) -> None:
         with self._lock:
+            old_record = self._agents.get(agent_id)
+            old_roots, old_holders = self.registry.snapshot(agent_id)
             self._database.execute("BEGIN IMMEDIATE")
             try:
                 super().revoke_agent(agent_id)
@@ -286,10 +307,16 @@ class SQLiteControlPlane(ControlPlane):
                 self._database.commit()
             except Exception:
                 self._database.rollback()
+                self.registry.restore(agent_id, old_roots, old_holders)
+                if old_record is None:
+                    self._agents.pop(agent_id, None)
+                else:
+                    self._agents[agent_id] = old_record
                 raise
 
     def record_decision(self, decision: AuthorizationDecision) -> None:
         with self._lock:
+            old_length = len(self._decisions)
             self._database.execute("BEGIN IMMEDIATE")
             try:
                 super().record_decision(decision)
@@ -310,6 +337,7 @@ class SQLiteControlPlane(ControlPlane):
                 self._database.commit()
             except Exception:
                 self._database.rollback()
+                del self._decisions[old_length:]
                 raise
 
     def decisions(

@@ -121,3 +121,20 @@ class KeyRegistry:
     def is_known(self, iss: str) -> bool:
         with self._lock:
             return iss in self._keys and bool(self._keys[iss])
+
+    def snapshot(self, iss: str) -> tuple[list[bytes], list[bytes]]:
+        """Return root and holder trust for transactional state restoration."""
+        with self._lock:
+            return list(self._keys.get(iss, [])), list(self._holders.get(iss, []))
+
+    def restore(self, iss: str, roots: list[bytes], holders: list[bytes]) -> None:
+        """Restore a snapshot captured before a failed durable mutation."""
+        with self._lock:
+            if roots:
+                self._keys[iss] = list(roots)
+            else:
+                self._keys.pop(iss, None)
+            if holders:
+                self._holders[iss] = list(holders)
+            else:
+                self._holders.pop(iss, None)

@@ -63,6 +63,18 @@ function generateJti(): string {
 }
 
 function normalizeConstraints(c?: Constraints): NormalizedConstraints {
+  for (const [name, value] of Object.entries(c ?? {})) {
+    if (value === undefined) continue;
+    if (name === "maxAmountUsd") {
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        throw new RangeError("maxAmountUsd must be a finite, non-negative number");
+      }
+    } else if (name === "maxCalls" || name === "rateLimitPerMin") {
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+        throw new RangeError(`${name} must be a non-negative integer`);
+      }
+    }
+  }
   return {
     maxCalls: c?.maxCalls ?? null,
     maxAmountUsd: c?.maxAmountUsd ?? null,
@@ -119,16 +131,18 @@ function wireJsonToClaims(payload: unknown): CapabilityClaims {
     }
   }
   const c = (p.constraints ?? {}) as Record<string, unknown>;
+  const constraints = {
+    maxCalls: (c.max_calls as number | null | undefined) ?? null,
+    maxAmountUsd: (c.max_amount_usd as number | null | undefined) ?? null,
+    rateLimitPerMin: (c.rate_limit_per_min as number | null | undefined) ?? null,
+    allowedParams: (c.allowed_params as Record<string, JsonValue> | undefined) ?? {},
+  };
+  normalizeConstraints({ maxCalls: constraints.maxCalls ?? undefined, maxAmountUsd: constraints.maxAmountUsd ?? undefined, rateLimitPerMin: constraints.rateLimitPerMin ?? undefined });
   return {
     iss: p.iss,
     sub: p.sub,
     capabilities: p.capabilities as string[],
-    constraints: {
-      maxCalls: (c.max_calls as number | null | undefined) ?? null,
-      maxAmountUsd: (c.max_amount_usd as number | null | undefined) ?? null,
-      rateLimitPerMin: (c.rate_limit_per_min as number | null | undefined) ?? null,
-      allowedParams: (c.allowed_params as Record<string, JsonValue> | undefined) ?? {},
-    },
+    constraints,
     iat: p.iat,
     exp: p.exp,
     jti: p.jti,
@@ -348,6 +362,7 @@ export async function verify(token: string, options: VerifyOptions): Promise<Cap
 
   if (claims.prf) {
     const parentParsed = parse(claims.prf);
+    if (parentParsed.claims.prf) throw new DelegationError("Delegation chains are limited to one hop");
     const parentSignature = b64urlDecode(claims.prf.split(".")[2] as string);
     await verifySignatureAndKid(
       parentParsed.header,

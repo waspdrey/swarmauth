@@ -9,10 +9,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+from html import escape
 import json
 import secrets
 import smtplib
 import sqlite3
+import ssl
 import threading
 import time
 from dataclasses import dataclass
@@ -79,50 +81,41 @@ class InMemoryApprovalStore:
 
     def __init__(self) -> None:
         self._requests: Dict[str, ApprovalRequest] = {}
+        self._lock = threading.RLock()
 
     def create(self, request: ApprovalRequest) -> None:
-        if request.request_id in self._requests:
-            raise ApprovalStateError("approval request already exists")
-        self._requests[request.request_id] = request
+        with self._lock:
+            if request.request_id in self._requests:
+                raise ApprovalStateError("approval request already exists")
+            self._requests[request.request_id] = request
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
-        return self._requests.get(request_id)
+        with self._lock:
+            return self._requests.get(request_id)
 
     def decide(self, request_id: str, status: str, approver: str, now: int) -> ApprovalRequest:
-        current = self._requests.get(request_id)
-        if current is None:
-            raise ApprovalStateError("approval request not found")
-        if current.status != "pending":
-            raise ApprovalStateError("approval request was already decided")
-        if now >= current.expires_at:
-            expired = ApprovalRequest(
-                request_id=current.request_id,
-                action=current.action,
-                capability=current.capability,
-                subject=current.subject,
-                requester=current.requester,
-                summary=current.summary,
-                expires_at=current.expires_at,
-                status="expired",
+        with self._lock:
+            current = self._requests.get(request_id)
+            if current is None:
+                raise ApprovalStateError("approval request not found")
+            if current.status != "pending":
+                raise ApprovalStateError("approval request was already decided")
+            if now >= current.expires_at:
+                self._requests[request_id] = ApprovalRequest(
+                    request_id=current.request_id, action=current.action, capability=current.capability,
+                    subject=current.subject, requester=current.requester, summary=current.summary,
+                    expires_at=current.expires_at, status="expired",
+                )
+                raise ApprovalStateError("approval request has expired")
+            if status not in {"approved", "rejected"}:
+                raise ApprovalStateError("invalid approval state")
+            decided = ApprovalRequest(
+                request_id=current.request_id, action=current.action, capability=current.capability,
+                subject=current.subject, requester=current.requester, summary=current.summary,
+                expires_at=current.expires_at, status=status, approver=approver, decided_at=now,
             )
-            self._requests[request_id] = expired
-            raise ApprovalStateError("approval request has expired")
-        if status not in {"approved", "rejected"}:
-            raise ApprovalStateError("invalid approval state")
-        decided = ApprovalRequest(
-            request_id=current.request_id,
-            action=current.action,
-            capability=current.capability,
-            subject=current.subject,
-            requester=current.requester,
-            summary=current.summary,
-            expires_at=current.expires_at,
-            status=status,
-            approver=approver,
-            decided_at=now,
-        )
-        self._requests[request_id] = decided
-        return decided
+            self._requests[request_id] = decided
+            return decided
 
 
 class SQLiteApprovalStore:
@@ -168,6 +161,7 @@ class SQLiteApprovalStore:
                 )
                 self._database.commit()
             except sqlite3.IntegrityError as exc:
+                self._database.rollback()
                 raise ApprovalStateError("approval request already exists") from exc
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
@@ -238,7 +232,7 @@ class ApprovalChannel(Protocol):
 
 
 class SlackApprovalChannel:
-    """Render a Slack Block Kit message with one-click approve/reject links."""
+    """Render a Slack Block Kit message with signed review links."""
 
     def message(self, request: ApprovalRequest, approve_url: str, reject_url: str) -> Mapping[str, object]:
         return {
@@ -307,7 +301,7 @@ class EmailApprovalChannel:
         return {
             "subject": f"Approval required: {request.action}",
             "text": f"{request.summary}\n\nApprove: {approve_url}\nReject: {reject_url}",
-            "html": f'<p>{request.summary}</p><p><a href="{approve_url}">Approve</a> · <a href="{reject_url}">Reject</a></p>',
+            "html": f'<p>{escape(request.summary)}</p><p><a href="{escape(approve_url, quote=True)}">Approve</a> · <a href="{escape(reject_url, quote=True)}">Reject</a></p>',
         }
 
 
@@ -325,6 +319,7 @@ class SMTPEmailChannel(EmailApprovalChannel):
         password: Optional[str] = None,
         starttls: bool = True,
         smtp_factory: Callable[..., smtplib.SMTP] = smtplib.SMTP,
+        tls_context: Optional[ssl.SSLContext] = None,
     ) -> None:
         if not recipients:
             raise ValueError("at least one approval email recipient is required")
@@ -338,6 +333,7 @@ class SMTPEmailChannel(EmailApprovalChannel):
         self._password = password
         self._starttls = starttls
         self._smtp_factory = smtp_factory
+        self._tls_context = tls_context or ssl.create_default_context()
 
     def message(self, request: ApprovalRequest, approve_url: str, reject_url: str) -> Mapping[str, object]:
         payload = super().message(request, approve_url, reject_url)
@@ -349,7 +345,7 @@ class SMTPEmailChannel(EmailApprovalChannel):
         email.add_alternative(str(payload["html"]), subtype="html")
         with self._smtp_factory(self._host, self._port, timeout=10) as client:
             if self._starttls:
-                client.starttls()
+                client.starttls(context=self._tls_context)
             if self._username is not None and self._password is not None:
                 client.login(self._username, self._password)
             client.send_message(email)
@@ -420,14 +416,20 @@ class ApprovalGatekeeper:
         return channel.message(request, links["approve"], links["reject"])
 
     def resolve(self, token: str, *, approver: str, now: Optional[int] = None) -> ApprovalRequest:
+        request, decision = self.preview(token, now=now)
+        current_time = int(time.time()) if now is None else now
+        return self._store.decide(request.request_id, decision, approver, current_time)
+
+    def preview(self, token: str, *, now: Optional[int] = None) -> tuple[ApprovalRequest, str]:
+        """Validate a link without changing state; safe for GET previews and scanners."""
         payload = self._decode(token)
         current_time = int(time.time()) if now is None else now
         if current_time >= int(payload["exp"]):
             raise ApprovalTokenError("approval link has expired")
-        request_id = str(payload["rid"])
-        if self._store.get(request_id) is None:
+        request = self._store.get(str(payload["rid"]))
+        if request is None:
             raise ApprovalStateError("approval request not found")
-        return self._store.decide(request_id, str(payload["decision"]), approver, current_time)
+        return request, str(payload["decision"])
 
     def get(self, request_id: str) -> Optional[ApprovalRequest]:
         return self._store.get(request_id)

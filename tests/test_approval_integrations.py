@@ -25,7 +25,8 @@ class FakeSMTP:
     def __exit__(self, *args):
         return False
 
-    def starttls(self):
+    def starttls(self, *, context):
+        assert context.check_hostname is True
         pass
 
     def login(self, username, password):

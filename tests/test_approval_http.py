@@ -4,7 +4,7 @@ from io import BytesIO
 import swarmauth
 
 
-def call(app, *, query: str, remote_user: str = ""):
+def call(app, *, query: str, remote_user: str = "", method: str = "GET", token: str | None = None):
     result = {}
 
     def start(status, headers):
@@ -13,11 +13,12 @@ def call(app, *, query: str, remote_user: str = ""):
 
     body = app(
         {
-            "REQUEST_METHOD": "GET",
+            "REQUEST_METHOD": method,
             "PATH_INFO": "/approvals/resolve",
             "QUERY_STRING": query,
             "REMOTE_USER": remote_user,
-            "wsgi.input": BytesIO(),
+            "CONTENT_LENGTH": str(len((f"token={token}" if token else "").encode())),
+            "wsgi.input": BytesIO((f"token={token}" if token else "").encode()),
         },
         start,
     )
@@ -38,7 +39,9 @@ def test_authenticated_browser_link_resolves_and_replay_is_rejected() -> None:
     app = swarmauth.ApprovalHTTPApp(gate)
     status, body = call(app, query=f"token={token}", remote_user="alice@example.com")
     assert status == "200 OK"
-    assert "approved" in body
+    assert "Confirm" in body
+    status, body = call(app, query="", token=token, method="POST", remote_user="alice@example.com")
+    assert status == "200 OK" and "approved" in body
     status, body = call(app, query=f"token={token}", remote_user="bob@example.com")
     assert status == "409 Conflict"
     assert "already_decided" in body

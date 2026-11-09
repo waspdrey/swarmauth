@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from html import escape
-from typing import Any, Callable, Iterable, Mapping, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional, cast
 from urllib.parse import parse_qs
 
 from swarmauth.approvals import ApprovalGatekeeper, ApprovalStateError, ApprovalTokenError
 
 
 class ApprovalHTTPApp:
-    """Resolve one-click links behind an identity-aware reverse proxy.
+    """Preview signed links on GET and resolve them on an explicit POST.
 
     The proxy should set ``REMOTE_USER`` after SSO. Anonymous link use is
     disabled by default; enabling it explicitly makes the signed URL the
@@ -21,11 +21,17 @@ class ApprovalHTTPApp:
         self._allow_anonymous_links = allow_anonymous_links
 
     def __call__(self, environ: Mapping[str, Any], start_response: Callable[..., Any]) -> Iterable[bytes]:
-        if str(environ.get("REQUEST_METHOD", "GET")).upper() != "GET":
+        method = str(environ.get("REQUEST_METHOD", "GET")).upper()
+        if method not in {"GET", "POST"}:
             return self._respond(start_response, 405, "Method Not Allowed", "method_not_allowed")
         if str(environ.get("PATH_INFO", "/")) != "/approvals/resolve":
             return self._respond(start_response, 404, "Not Found", "not_found")
         token = parse_qs(str(environ.get("QUERY_STRING", ""))).get("token", [None])[0]
+        if method == "POST":
+            length = int(environ.get("CONTENT_LENGTH", "0") or "0")
+            stream = cast(Any, environ.get("wsgi.input"))
+            form = parse_qs(stream.read(length).decode("utf-8"))
+            token = form.get("token", [token])[0]
         if not token:
             return self._respond(start_response, 400, "Missing approval token", "invalid_request")
         # Only trust the server-authenticated WSGI identity. Do not accept an
@@ -34,11 +40,28 @@ class ApprovalHTTPApp:
         if not approver and not self._allow_anonymous_links:
             return self._respond(start_response, 401, "Sign in before reviewing this action", "authentication_required")
         try:
+            request, decision = self._gatekeeper.preview(token)
+            if request.status != "pending":
+                return self._respond(start_response, 409, "This approval request is no longer pending", "already_decided")
+            if method == "GET":
+                body = (
+                    "<!doctype html><meta charset=utf-8><title>SwarmAuth review</title>"
+                    f"<main><h1>Review action: {escape(request.action)}</h1>"
+                    f"<p>{escape(request.summary)}</p>"
+                    f"<p>Requested by <strong>{escape(request.requester)}</strong>.</p>"
+                    "<p>Confirm this decision:</p>"
+                    "<form method='post' action='/approvals/resolve'>"
+                    f"<input type='hidden' name='token' value='{escape(token, quote=True)}'>"
+                    f"<button type='submit'>{escape(decision.title())}</button></form></main>"
+                )
+                return self._respond(start_response, 200, body, None, content_type="text/html; charset=utf-8")
             result = self._gatekeeper.resolve(token, approver=approver or "link-holder")
         except ApprovalTokenError:
             return self._respond(start_response, 400, "This approval link is invalid or expired", "invalid_token")
         except ApprovalStateError as exc:
-            return self._respond(start_response, 409, str(exc), "already_decided")
+            if "not found" in str(exc):
+                return self._respond(start_response, 404, "Approval request not found", "not_found")
+            return self._respond(start_response, 409, "This approval request is no longer pending", "already_decided")
         body = (
             "<!doctype html><meta charset=utf-8><title>SwarmAuth review</title>"
             f"<main><h1>Action {escape(result.status)}</h1>"
