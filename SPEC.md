@@ -218,6 +218,36 @@ authenticated channel. The JCT format and verification algorithm are
 identical either way — SwarmAuth defines the token and the boundary check,
 not the topology.
 
+### 5.1 Authorization Envelopes, Evidence, and Finality
+
+The reference SDK can map verified JCT claims into an interoperable
+authorization envelope with four sections: `MANDATE`, `CONSTRAINTS`,
+`VALIDITY`, and optional `APPROVAL_EVIDENCE`. This is an explicit mapping to
+the emerging Agent Authorization Envelope shape, not a claim that an external
+draft has standardized SwarmAuth's inner field names.
+
+For high-consequence actions, deployments SHOULD call
+`FinalConsequenceAuthorizer.authorize` immediately before the irreversible
+commit. It rechecks the final target, capability, parameter constraints,
+resource version, approval evidence, revocation state, and optional runtime
+attestation. Approval-bound calls MUST use `max_calls=1`; the reference
+in-memory consequence store atomically prevents reuse. The consequence
+boundary MUST validate approval evidence against an authoritative approval
+store (for example, `ApprovalGatekeeper.verify_evidence`); a hash supplied by
+the requesting agent is not trusted evidence by itself.
+
+Authorization decisions and execution outcomes MAY be emitted as compact
+Ed25519-signed receipts. An outcome receipt carries the SHA-256 hash of its
+decision receipt, creating a tamper-evident decision-to-result chain without
+including a bearer credential. Approval evidence likewise hashes the exact
+reviewed request and resulting human decision.
+
+Delegation revocation stores SHOULD record parent/child authorization IDs so
+revoking a parent immediately revokes every registered descendant. OAuth,
+WIMSE, and Entra adapters MUST validate external credentials before mapping
+their scopes into SwarmAuth capabilities; the reference adapters deliberately
+require a deployment-supplied validation callback.
+
 ## 6. Capability Naming Convention
 
 Capabilities are opaque strings to the protocol, but the reference SDK and

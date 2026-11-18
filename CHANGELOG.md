@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Interoperable authorization envelopes with explicit `MANDATE`,
+  `CONSTRAINTS`, and `VALIDITY` AAE mapping plus stable envelope digests.
+- Compact approval evidence that hashes the exact reviewed request and its
+  human decision without copying sensitive summaries into downstream tokens.
+- Ed25519-signed authorization-decision and execution-outcome receipts, with
+  outcome receipts cryptographically linked to their originating decision.
+- Pluggable proof-of-execution identity for TPM, TEE, SPIFFE, WebAuthn, and
+  cloud-attestation validators, bound to a fresh authorization challenge.
+- PACE-style single-action approval enforcement and descendant revocation.
+- A final-consequence authorizer that rechecks the exact target, payload
+  constraints, resource version, approval, revocation, and execution identity
+  immediately before commit.
+- Validated-claims adapters for generic OAuth delegation, WIMSE workloads,
+  and Microsoft Entra Agent ID/OBO flows.
+
 ## [0.1.8] - 2026-11-09
 
 ### Added

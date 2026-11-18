@@ -32,7 +32,6 @@ from swarmauth.middleware import TokenIssuer, UsageTracker, verify_and_check
 from swarmauth.policy import Grant, IssuerPolicy
 from swarmauth.token import Constraints
 
-
 # ---------------------------------------------------------------------------
 # Simulated ledger
 # ---------------------------------------------------------------------------

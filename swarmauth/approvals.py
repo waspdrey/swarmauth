@@ -19,8 +19,10 @@ import time
 from dataclasses import dataclass
 from email.message import EmailMessage
 from html import escape
-from typing import Callable, Dict, Mapping, Optional, Protocol, TypedDict, cast
+from typing import Any, Callable, Dict, Mapping, Optional, Protocol, TypedDict, cast
 from urllib.request import Request, urlopen
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from swarmauth.exceptions import ApprovalError
 
@@ -38,6 +40,36 @@ class ApprovalPayload(TypedDict):
     decision: str
     exp: int
     nonce: str
+
+
+def _canonical_json(value: Mapping[str, object]) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+
+
+def _sha256(value: Mapping[str, object]) -> str:
+    return hashlib.sha256(_canonical_json(value)).hexdigest()
+
+
+class ApprovalEvidence(BaseModel):
+    """Portable, tamper-evident proof that a specific request was reviewed.
+
+    The hashes bind the human decision to the immutable approval intent while
+    keeping the full summary and other potentially sensitive fields out of an
+    authorization envelope or receipt.
+    """
+
+    version: str = "1.0"
+    request_id: str
+    request_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+    decision: str = Field(..., pattern=r"^(approved|rejected)$")
+    approver: str
+    decided_at: int
+    decision_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    def as_dict(self) -> Dict[str, Any]:
+        return self.model_dump(mode="json")
 
 
 @dataclass(frozen=True)
@@ -66,6 +98,37 @@ class ApprovalRequest:
             "approver": self.approver,
             "decided_at": self.decided_at,
         }
+
+    def intent_dict(self) -> Dict[str, object]:
+        """Immutable fields a reviewer approved or rejected."""
+        return {
+            "request_id": self.request_id,
+            "action": self.action,
+            "capability": self.capability,
+            "subject": self.subject,
+            "requester": self.requester,
+            "summary": self.summary,
+            "expires_at": self.expires_at,
+        }
+
+    def evidence(self) -> ApprovalEvidence:
+        if self.status not in {"approved", "rejected"} or self.approver is None or self.decided_at is None:
+            raise ApprovalStateError("approval request has no completed decision evidence")
+        request_hash = _sha256(self.intent_dict())
+        decision = {
+            "request_hash": request_hash,
+            "decision": self.status,
+            "approver": self.approver,
+            "decided_at": self.decided_at,
+        }
+        return ApprovalEvidence(
+            request_id=self.request_id,
+            request_hash=request_hash,
+            decision=self.status,
+            approver=self.approver,
+            decided_at=self.decided_at,
+            decision_hash=_sha256(decision),
+        )
 
 
 class ApprovalStore(Protocol):
@@ -443,6 +506,26 @@ class ApprovalGatekeeper:
         if request is None or request.status != "approved":
             raise ApprovalStateError("action requires an approved human review")
         return request
+
+    def evidence(self, request_id: str) -> ApprovalEvidence:
+        """Return compact evidence bound to the exact reviewed request."""
+        request = self._store.get(request_id)
+        if request is None:
+            raise ApprovalStateError("approval request not found")
+        return request.evidence()
+
+    def verify_evidence(self, evidence: ApprovalEvidence) -> bool:
+        """Check evidence against the gatekeeper's authoritative decision store."""
+        request = self._store.get(evidence.request_id)
+        if request is None:
+            return False
+        try:
+            expected = request.evidence()
+        except ApprovalStateError:
+            return False
+        return hmac.compare_digest(expected.request_hash, evidence.request_hash) and hmac.compare_digest(
+            expected.decision_hash, evidence.decision_hash
+        )
 
     def _link(self, request: ApprovalRequest, decision: str) -> str:
         payload = {"rid": request.request_id, "decision": decision, "exp": request.expires_at, "nonce": secrets.token_urlsafe(8)}
