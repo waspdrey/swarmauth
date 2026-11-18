@@ -12,7 +12,9 @@ from swarmauth.token import CapabilityClaims, Constraints
 
 
 def _canonical_json(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
 
 
 class AuthorizationMandate(BaseModel):

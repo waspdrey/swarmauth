@@ -19,7 +19,7 @@ from typing import Any, Callable, Iterator, Mapping, Optional, TypeVar
 
 from swarmauth.crypto import KeyPair
 from swarmauth.events import AuthorizationDecision, DecisionSink
-from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
+from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError, TokenRevokedError
 from swarmauth.policy import IssuerPolicy
 from swarmauth.registry import KeyRegistry
 from swarmauth.revocation import InMemoryDelegationRevocationStore, RevocationStore
@@ -184,6 +184,8 @@ class TokenIssuer:
         """Mint one narrower child of `parent` with this issuer's key."""
         resolved = constraints or Constraints()
         _header, parent_claims, _signing_input = CapabilityToken.parse(parent)
+        if revocation_store is not None and revocation_store.is_revoked(parent_claims.jti):
+            raise TokenRevokedError(f"Parent token '{parent_claims.jti}' has been revoked")
         if self.policy is not None:
             self.policy.check(
                 iss=iss,

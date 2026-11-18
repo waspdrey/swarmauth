@@ -24,6 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Validated-claims adapters for generic OAuth delegation, WIMSE workloads,
   and Microsoft Entra Agent ID/OBO flows.
 
+### Fixed
+
+- Bind approval evidence to the exact capability, target, and requesting
+  agent so a valid approval cannot be replayed for a different mandate.
+- Enforce pinned parameter types strictly; JSON boolean values can no longer
+  satisfy numeric `0`/`1` constraints through Python equality semantics.
+- Reject stale or future execution attestations and non-finite/non-canonical
+  JSON values before signing, hashing, or consuming a single-use approval.
+- Enforce final-consequence amount ceilings and validate payloads before
+  mutating replay state.
+- Prevent attenuation from revoked parents, cascade revocation to children
+  linked after parent revocation, and purge expired delegation links.
+- Enforce type-specific signed-receipt schemas so execution outcomes always
+  reference a decision receipt and decision receipts cannot masquerade as
+  outcomes.
+
 ## [0.1.8] - 2026-11-09
 
 ### Added

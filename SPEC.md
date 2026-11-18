@@ -240,13 +240,23 @@ Authorization decisions and execution outcomes MAY be emitted as compact
 Ed25519-signed receipts. An outcome receipt carries the SHA-256 hash of its
 decision receipt, creating a tamper-evident decision-to-result chain without
 including a bearer credential. Approval evidence likewise hashes the exact
-reviewed request and resulting human decision.
+reviewed request and resulting human decision. Its cleartext capability,
+subject, and requester fields MUST match both that authoritative record and
+the final mandate; a valid approval for one action is not transferable to a
+different action or agent.
 
 Delegation revocation stores SHOULD record parent/child authorization IDs so
 revoking a parent immediately revokes every registered descendant. OAuth,
 WIMSE, and Entra adapters MUST validate external credentials before mapping
 their scopes into SwarmAuth capabilities; the reference adapters deliberately
 require a deployment-supplied validation callback.
+
+Pinned parameter comparisons preserve JSON types: booleans do not equal
+integers. Non-finite numbers and values that cannot be represented as
+canonical JSON are rejected. A final consequence carrying
+`max_amount_usd` MUST supply its actual amount for a fresh ceiling check.
+Runtime attestation adapters MUST enforce freshness as well as nonce and
+agent identity binding.
 
 ## 6. Capability Naming Convention
 

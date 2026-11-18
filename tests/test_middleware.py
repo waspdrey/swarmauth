@@ -259,3 +259,21 @@ def test_usage_tracker_drops_expired_entries():
     verify_and_check(token, issuer_public_key=kp.public_bytes, required_capability="tool:b", tracker=tracker)
     assert "stale" not in tracker._usage
     assert tracker._usage
+
+
+def test_allowed_params_do_not_equate_booleans_and_integers():
+    kp = KeyPair.generate()
+    token = TokenIssuer(kp).issue(
+        iss="a",
+        sub="tool:x",
+        capabilities=["tool:x"],
+        constraints=Constraints(allowed_params={"quantity": 1}),
+    )
+    with pytest.raises(ConstraintViolationError):
+        verify_and_check(
+            token,
+            issuer_public_key=kp.public_bytes,
+            audience="tool:x",
+            required_capability="tool:x",
+            params={"quantity": True},
+        )

@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any, Literal, Mapping, Optional, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from swarmauth.crypto import KeyPair, b64url_decode, b64url_encode, generate_jti, verify_signature
 from swarmauth.events import AuthorizationDecision
@@ -17,7 +17,9 @@ RECEIPT_ALG = "EdDSA"
 
 
 def _canonical_json(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
 
 
 def receipt_hash(receipt: str) -> str:
@@ -38,6 +40,20 @@ class ReceiptClaims(BaseModel):
     data: dict[str, Any]
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def _type_specific_shape(self) -> "ReceiptClaims":
+        if self.receipt_type == "authorization_decision":
+            if self.decision_receipt_hash is not None:
+                raise ValueError("decision receipts cannot reference another decision receipt")
+            if self.data.get("outcome") not in {"allow", "deny"}:
+                raise ValueError("decision receipt data requires an allow/deny outcome")
+        else:
+            if self.decision_receipt_hash is None:
+                raise ValueError("outcome receipts must reference their decision receipt")
+            if self.data.get("status") not in {"succeeded", "failed", "cancelled"}:
+                raise ValueError("outcome receipt data has an invalid status")
+        return self
 
 
 class ReceiptSink(Protocol):

@@ -26,6 +26,8 @@ def test_approval_evidence_binds_exact_reviewed_intent() -> None:
     assert len(evidence.request_hash) == 64
     assert len(evidence.decision_hash) == 64
     assert gate.verify_evidence(evidence)
+    altered = evidence.model_copy(update={"capability": "payment:admin"})
+    assert not gate.verify_evidence(altered)
 
     changed = request.__class__(**{**request.as_dict(), "summary": "Send USD 2,500 to vendor 7"})
     assert changed.intent_dict() != request.intent_dict()
@@ -94,3 +96,26 @@ def test_signed_decision_and_outcome_receipts_are_linked_and_tamper_evident() ->
         swarmauth.SignedReceipt.verify(
             f"{header}.{changed_payload}.{signature}", signer_public_key=signer.public_bytes
         )
+
+
+def test_receipt_claims_reject_cross_type_and_unlinked_shapes() -> None:
+    with pytest.raises(ValueError):
+        swarmauth.ReceiptClaims(
+            receipt_type="execution_outcome",
+            issuer="tool:x",
+            issued_at=1,
+            data={"status": "succeeded"},
+        )
+    with pytest.raises(ValueError):
+        swarmauth.ReceiptClaims(
+            receipt_type="authorization_decision",
+            issuer="enforcer:x",
+            issued_at=1,
+            decision_receipt_hash="a" * 64,
+            data={"outcome": "allow"},
+        )
+
+
+def test_envelope_digest_rejects_non_standard_nan() -> None:
+    with pytest.raises(ValueError):
+        swarmauth.Constraints(allowed_params={"amount": float("nan")})
