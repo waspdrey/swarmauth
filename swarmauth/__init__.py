@@ -1,8 +1,10 @@
 """SwarmAuth: OAuth 2.1-style capability delegation for autonomous AI agent swarms."""
 
+from swarmauth.adapters import EntraAgentAdapter, OAuthDelegationAdapter, WIMSEClaimsAdapter
 from swarmauth.approval_http import ApprovalHTTPApp
 from swarmauth.approvals import (
     ApprovalChannel,
+    ApprovalEvidence,
     ApprovalGatekeeper,
     ApprovalRequest,
     ApprovalStateError,
@@ -15,9 +17,11 @@ from swarmauth.approvals import (
     SQLiteApprovalStore,
     WebhookApprovalChannel,
 )
+from swarmauth.consequence import FinalConsequenceAuthorizer, FinalConsequenceDecision, InMemoryConsequenceStore
 from swarmauth.control_plane import AgentRecord, ControlPlane, Principal, SQLiteControlPlane, TenantControlPlane, ToolRecord
 from swarmauth.control_plane_http import ControlPlaneHTTPApp, PrincipalResolver
 from swarmauth.crypto import KeyPair
+from swarmauth.envelope import AuthorizationEnvelope, AuthorizationMandate, AuthorizationValidity
 from swarmauth.events import AuthorizationDecision, DecisionSink, JsonlDecisionSink
 from swarmauth.exceptions import (
     ApprovalError,
@@ -36,6 +40,12 @@ from swarmauth.exceptions import (
     TokenRevokedError,
     UnknownIssuerError,
 )
+from swarmauth.identity import (
+    CallbackIdentityVerifier,
+    ExecutionIdentityEvidence,
+    ExecutionIdentityVerifier,
+    VerifiedExecutionIdentity,
+)
 from swarmauth.middleware import (
     TokenIssuer,
     UsageTracker,
@@ -49,13 +59,24 @@ from swarmauth.middleware import (
 )
 from swarmauth.oidc import OIDCPrincipalResolver
 from swarmauth.policy import Grant, IssuerPolicy
-from swarmauth.revocation import InMemoryRevocationStore, RevocationStore
+from swarmauth.receipts import (
+    ReceiptClaims,
+    ReceiptSink,
+    SignedReceipt,
+    issue_decision_receipt,
+    issue_outcome_receipt,
+    receipt_hash,
+)
+from swarmauth.revocation import InMemoryDelegationRevocationStore, InMemoryRevocationStore, RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability
 
 __version__ = "0.1.8"
 
 __all__ = [
     "KeyPair",
+    "OAuthDelegationAdapter",
+    "WIMSEClaimsAdapter",
+    "EntraAgentAdapter",
     "ControlPlane",
     "AgentRecord",
     "ToolRecord",
@@ -66,6 +87,7 @@ __all__ = [
     "ControlPlaneAuthenticationError",
     "ApprovalError",
     "ApprovalChannel",
+    "ApprovalEvidence",
     "ApprovalGatekeeper",
     "ApprovalRequest",
     "ApprovalStateError",
@@ -101,13 +123,30 @@ __all__ = [
     "DelegationError",
     "RevocationStore",
     "InMemoryRevocationStore",
+    "InMemoryDelegationRevocationStore",
     "UsageTracker",
     "use_token",
     "Grant",
     "IssuerPolicy",
     "AuthorizationDecision",
+    "AuthorizationEnvelope",
+    "AuthorizationMandate",
+    "AuthorizationValidity",
+    "FinalConsequenceAuthorizer",
+    "FinalConsequenceDecision",
+    "InMemoryConsequenceStore",
+    "ExecutionIdentityEvidence",
+    "ExecutionIdentityVerifier",
+    "VerifiedExecutionIdentity",
+    "CallbackIdentityVerifier",
     "DecisionSink",
     "JsonlDecisionSink",
+    "ReceiptClaims",
+    "ReceiptSink",
+    "SignedReceipt",
+    "issue_decision_receipt",
+    "issue_outcome_receipt",
+    "receipt_hash",
     "bearer_token_from_headers",
     "use_bearer_token",
     "use_oauth_bearer_token",

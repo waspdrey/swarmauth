@@ -22,7 +22,7 @@ from swarmauth.events import AuthorizationDecision, DecisionSink
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError
 from swarmauth.policy import IssuerPolicy
 from swarmauth.registry import KeyRegistry
-from swarmauth.revocation import RevocationStore
+from swarmauth.revocation import InMemoryDelegationRevocationStore, RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability, check_params
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -179,6 +179,7 @@ class TokenIssuer:
         capabilities: list[str],
         constraints: Optional[Constraints] = None,
         ttl_seconds: int = 10,
+        revocation_store: Optional[InMemoryDelegationRevocationStore] = None,
     ) -> str:
         """Mint one narrower child of `parent` with this issuer's key."""
         resolved = constraints or Constraints()
@@ -192,7 +193,7 @@ class TokenIssuer:
                 ttl_seconds=ttl_seconds,
                 dlg=None,
             )
-        return CapabilityToken.attenuate(
+        child = CapabilityToken.attenuate(
             issuer_keypair=self.keypair,
             parent=parent,
             iss=iss,
@@ -200,6 +201,10 @@ class TokenIssuer:
             constraints=resolved,
             ttl_seconds=ttl_seconds,
         )
+        if revocation_store is not None:
+            _header, child_claims, _input = CapabilityToken.parse(child)
+            revocation_store.link(parent_claims.jti, child_claims.jti, child_expires_at=child_claims.exp)
+        return child
 
 
 @dataclass

@@ -52,3 +52,31 @@ class InMemoryRevocationStore:
         with self._lock:
             self._purge_expired_unlocked(now)
             return jti in self._revoked
+
+
+class InMemoryDelegationRevocationStore(InMemoryRevocationStore):
+    """Track delegation ancestry and cascade revocation to every descendant."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._children: dict[str, dict[str, int]] = {}
+
+    def link(self, parent_jti: str, child_jti: str, *, child_expires_at: int) -> None:
+        with self._lock:
+            self._children.setdefault(parent_jti, {})[child_jti] = child_expires_at
+
+    def revoke_tree(self, jti: str, *, expires_at: int) -> None:
+        """Revoke one authorization and all registered descendants atomically."""
+        now = time.time()
+        with self._lock:
+            self._purge_expired_unlocked(now)
+            pending = [(jti, expires_at)]
+            seen: set[str] = set()
+            while pending:
+                current, current_expiry = pending.pop()
+                if current in seen:
+                    continue
+                seen.add(current)
+                if current_expiry > now:
+                    self._revoked[current] = max(current_expiry, self._revoked.get(current, 0))
+                pending.extend(self._children.get(current, {}).items())
