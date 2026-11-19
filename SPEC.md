@@ -226,6 +226,13 @@ authorization envelope with four sections: `MANDATE`, `CONSTRAINTS`,
 the emerging Agent Authorization Envelope shape, not a claim that an external
 draft has standardized SwarmAuth's inner field names.
 
+`MANDATE` MAY carry a human-readable `purpose`, an `accountable_owner`, and
+explicit capability-pattern `exclusions`. Exclusions override grants: a final
+capability covered by an exclusion MUST be denied even when it is also covered
+by the mandate's capability list. A deployment MAY require purpose and owner
+metadata at governed consequence boundaries. These fields add governance
+context; they do not replace signed capabilities or constraints.
+
 For high-consequence actions, deployments SHOULD call
 `FinalConsequenceAuthorizer.authorize` immediately before the irreversible
 commit. It rechecks the final target, capability, parameter constraints,
@@ -245,6 +252,12 @@ subject, and requester fields MUST match both that authoritative record and
 the final mandate; a valid approval for one action is not transferable to a
 different action or agent.
 
+Receipts MAY repeat the mandate's `purpose` and `accountable_owner` for audit
+correlation. Their `evidence_kind` distinguishes an agent self-report, a
+platform runtime record, and externally verifiable evidence. This label is a
+provenance assertion by the receipt issuer, so consumers MUST still decide
+whether that issuer is trusted for the claimed evidence class.
+
 Delegation revocation stores SHOULD record parent/child authorization IDs so
 revoking a parent immediately revokes every registered descendant. OAuth,
 WIMSE, and Entra adapters MUST validate external credentials before mapping
@@ -257,6 +270,14 @@ canonical JSON are rejected. A final consequence carrying
 `max_amount_usd` MUST supply its actual amount for a fresh ceiling check.
 Runtime attestation adapters MUST enforce freshness as well as nonce and
 agent identity binding.
+
+The reference `AgentCAEATIdentityVerifier` composes deployment-provided
+cryptographic validators for an organization AgentCA certificate and an Entity
+Attestation Token (EAT). It requires the certificate, EAT, and envelope to bind
+the same agent and key, checks a local trust-domain allowlist, and exposes
+validated SHA-256 component measurements. The callbacks remain responsible
+for certificate-chain validation, EAT signature/status validation, and their
+own issuer policies; SwarmAuth does not treat unverified claims as identity.
 
 ## 6. Capability Naming Convention
 

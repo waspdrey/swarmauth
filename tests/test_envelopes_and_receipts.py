@@ -42,11 +42,19 @@ def test_claims_round_trip_through_aae_envelope() -> None:
         constraints=swarmauth.Constraints(max_calls=1, allowed_params={"vendor": "7"}),
     )
     _, claims, _ = swarmauth.CapabilityToken.parse(token)
-    envelope = swarmauth.AuthorizationEnvelope.from_claims(claims)
+    envelope = swarmauth.AuthorizationEnvelope.from_claims(
+        claims,
+        purpose="Pay an approved supplier invoice",
+        exclusions=["payment:admin"],
+        accountable_owner="role:finance-controller",
+    )
 
     wire = envelope.to_aae()
     assert set(wire) >= {"MANDATE", "CONSTRAINTS", "VALIDITY"}
     assert wire["MANDATE"]["capabilities"] == ["payment:send"]
+    assert wire["MANDATE"]["purpose"] == "Pay an approved supplier invoice"
+    assert wire["MANDATE"]["exclusions"] == ["payment:admin"]
+    assert wire["MANDATE"]["accountable_owner"] == "role:finance-controller"
     assert swarmauth.AuthorizationEnvelope.from_aae(wire) == envelope
     assert len(envelope.digest()) == 64
 
@@ -69,11 +77,16 @@ def test_signed_decision_and_outcome_receipts_are_linked_and_tamper_evident() ->
         issuer="enforcer:payments",
         envelope_hash="a" * 64,
         approval_hash="b" * 64,
+        purpose="Pay an approved supplier invoice",
+        accountable_owner="role:finance-controller",
+        evidence_kind="externally_verifiable",
         now=200,
     )
     decision_claims = swarmauth.SignedReceipt.verify(decision_receipt, signer_public_key=signer.public_bytes)
     assert decision_claims.receipt_type == "authorization_decision"
     assert decision_claims.approval_hash == "b" * 64
+    assert decision_claims.evidence_kind == "externally_verifiable"
+    assert decision_claims.accountable_owner == "role:finance-controller"
 
     outcome_receipt = swarmauth.issue_outcome_receipt(
         signer=signer,

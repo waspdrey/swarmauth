@@ -180,6 +180,39 @@ def test_final_consequence_binds_approval_to_capability_target_and_requester() -
         )
 
 
+def test_final_consequence_enforces_exclusions_and_governance_context() -> None:
+    envelope, gate = _approved_envelope()
+    authorizer = swarmauth.FinalConsequenceAuthorizer(approval_verifier=gate.verify_evidence)
+    with pytest.raises(swarmauth.ConstraintViolationError, match="purpose"):
+        authorizer.authorize(
+            envelope,
+            capability="payment:send",
+            target="tool:payments",
+            payload={"vendor": "7"},
+            require_governance=True,
+        )
+
+    governed = envelope.model_copy(
+        update={
+            "mandate": envelope.mandate.model_copy(
+                update={
+                    "purpose": "Pay an approved supplier invoice",
+                    "accountable_owner": "role:finance-controller",
+                    "exclusions": ["payment:send"],
+                }
+            )
+        }
+    )
+    with pytest.raises(swarmauth.CapabilityViolationError, match="excluded"):
+        authorizer.authorize(
+            governed,
+            capability="payment:send",
+            target="tool:payments",
+            payload={"vendor": "7"},
+            require_governance=True,
+        )
+
+
 def test_final_consequence_checks_amount_and_hashes_before_consuming() -> None:
     envelope, gate = _approved_envelope()
     envelope = envelope.model_copy(

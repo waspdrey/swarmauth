@@ -14,6 +14,7 @@ from swarmauth.exceptions import InvalidSignatureError, MalformedTokenError
 
 RECEIPT_TYPE = "SAR"
 RECEIPT_ALG = "EdDSA"
+EvidenceKind = Literal["agent_self_report", "platform_runtime_record", "externally_verifiable"]
 
 
 def _canonical_json(value: Mapping[str, Any]) -> bytes:
@@ -34,6 +35,9 @@ class ReceiptClaims(BaseModel):
     issuer: str
     issued_at: int
     subject: Optional[str] = None
+    purpose: Optional[str] = Field(default=None, min_length=1)
+    accountable_owner: Optional[str] = Field(default=None, min_length=1)
+    evidence_kind: EvidenceKind = "platform_runtime_record"
     envelope_hash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     approval_hash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     decision_receipt_hash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
@@ -101,6 +105,9 @@ def issue_decision_receipt(
     issuer: str,
     envelope_hash: Optional[str] = None,
     approval_hash: Optional[str] = None,
+    purpose: Optional[str] = None,
+    accountable_owner: Optional[str] = None,
+    evidence_kind: EvidenceKind = "platform_runtime_record",
     now: Optional[int] = None,
 ) -> str:
     """Sign an allow/deny decision without embedding its bearer credential."""
@@ -111,6 +118,9 @@ def issue_decision_receipt(
         subject=decision.subject,
         envelope_hash=envelope_hash,
         approval_hash=approval_hash,
+        purpose=purpose,
+        accountable_owner=accountable_owner,
+        evidence_kind=evidence_kind,
         data=decision.as_dict(),
     )
     return SignedReceipt.issue(signer=signer, claims=claims)
@@ -124,6 +134,9 @@ def issue_outcome_receipt(
     status: Literal["succeeded", "failed", "cancelled"],
     metadata: Optional[Mapping[str, Any]] = None,
     subject: Optional[str] = None,
+    purpose: Optional[str] = None,
+    accountable_owner: Optional[str] = None,
+    evidence_kind: EvidenceKind = "platform_runtime_record",
     now: Optional[int] = None,
 ) -> str:
     """Sign an execution outcome and cryptographically link it to its decision."""
@@ -132,6 +145,9 @@ def issue_outcome_receipt(
         issuer=issuer,
         issued_at=int(time.time()) if now is None else now,
         subject=subject,
+        purpose=purpose,
+        accountable_owner=accountable_owner,
+        evidence_kind=evidence_kind,
         decision_receipt_hash=receipt_hash(decision_receipt),
         data={"status": status, "metadata": dict(metadata or {})},
     )

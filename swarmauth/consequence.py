@@ -87,6 +87,7 @@ class FinalConsequenceAuthorizer:
         expected_resource_version: Optional[str] = None,
         actual_resource_version: Optional[str] = None,
         require_approval: bool = False,
+        require_governance: bool = False,
         now: Optional[int] = None,
     ) -> FinalConsequenceDecision:
         try:
@@ -112,6 +113,19 @@ class FinalConsequenceAuthorizer:
                 f"authorization envelope does not grant '{capability}'",
                 required=capability,
                 granted=envelope.mandate.capabilities,
+            )
+        if any(capability_covered(capability, [excluded]) for excluded in envelope.mandate.exclusions):
+            raise CapabilityViolationError(
+                f"final capability '{capability}' is explicitly excluded by the mandate",
+                required=capability,
+                granted=envelope.mandate.capabilities,
+            )
+        if require_governance and (
+            envelope.mandate.purpose is None or envelope.mandate.accountable_owner is None
+        ):
+            raise ConstraintViolationError(
+                "governed consequences require purpose and accountable_owner",
+                constraint="governance_context",
             )
         for key, expected in envelope.constraints.allowed_params.items():
             if key not in payload or not strict_value_equal(payload[key], expected):

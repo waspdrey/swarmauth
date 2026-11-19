@@ -36,6 +36,8 @@ class VerifiedExecutionIdentity(BaseModel):
     key_id: str
     attestation_format: str
     environment: Optional[str] = None
+    trust_domain: Optional[str] = None
+    attested_components: dict[str, str] = Field(default_factory=dict)
     evidence_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
     verified_at: int
 

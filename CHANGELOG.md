@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immediately before commit.
 - Validated-claims adapters for generic OAuth delegation, WIMSE workloads,
   and Microsoft Entra Agent ID/OBO flows.
+- Governance-aware mandates with explicit `purpose`, capability `exclusions`,
+  and `accountable_owner`, plus receipt-level `evidence_kind` provenance.
+- A federated trust-domain adapter that binds an organization-verified AgentCA
+  certificate to fresh Entity Attestation Token evidence and attested component
+  hashes.
+- An Ed25519 AgentCA/EAT verification micro-benchmark with ATI's published
+  174-microsecond result recorded as a directional, non-equivalent reference.
 
 ### Fixed
 
