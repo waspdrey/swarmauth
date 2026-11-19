@@ -60,6 +60,7 @@ from swarmauth.middleware import (
 from swarmauth.oidc import OIDCPrincipalResolver
 from swarmauth.policy import Grant, IssuerPolicy
 from swarmauth.receipts import (
+    EvidenceKind,
     ReceiptClaims,
     ReceiptSink,
     SignedReceipt,
@@ -69,6 +70,11 @@ from swarmauth.receipts import (
 )
 from swarmauth.revocation import InMemoryDelegationRevocationStore, InMemoryRevocationStore, RevocationStore
 from swarmauth.token import CapabilityClaims, CapabilityToken, Constraints, check_capability
+from swarmauth.trust import (
+    AgentCAEATIdentityVerifier,
+    AgentCertificateVerifier,
+    EntityAttestationTokenVerifier,
+)
 
 __version__ = "0.1.8"
 
@@ -139,9 +145,13 @@ __all__ = [
     "ExecutionIdentityVerifier",
     "VerifiedExecutionIdentity",
     "CallbackIdentityVerifier",
+    "AgentCAEATIdentityVerifier",
+    "AgentCertificateVerifier",
+    "EntityAttestationTokenVerifier",
     "DecisionSink",
     "JsonlDecisionSink",
     "ReceiptClaims",
+    "EvidenceKind",
     "ReceiptSink",
     "SignedReceipt",
     "issue_decision_receipt",

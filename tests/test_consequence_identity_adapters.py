@@ -162,3 +162,131 @@ def test_oauth_wimse_and_entra_adapters_map_only_validated_scopes(
         scope_to_capability={"Mail.Read": "mail:read"},
     )
     assert swarmauth.CapabilityToken.parse(entra_token)[1].capabilities == ["mail:read"]
+
+
+def test_final_consequence_binds_approval_to_capability_target_and_requester() -> None:
+    envelope, gate = _approved_envelope()
+    mismatched = envelope.model_copy(
+        update={"mandate": envelope.mandate.model_copy(update={"issuer": "agent:attacker"})}
+    )
+    authorizer = swarmauth.FinalConsequenceAuthorizer(approval_verifier=gate.verify_evidence)
+    with pytest.raises(swarmauth.ConstraintViolationError, match="does not match"):
+        authorizer.authorize(
+            mismatched,
+            capability="payment:send",
+            target="tool:payments",
+            payload={"vendor": "7"},
+            require_approval=True,
+        )
+
+
+def test_final_consequence_enforces_exclusions_and_governance_context() -> None:
+    envelope, gate = _approved_envelope()
+    authorizer = swarmauth.FinalConsequenceAuthorizer(approval_verifier=gate.verify_evidence)
+    with pytest.raises(swarmauth.ConstraintViolationError, match="purpose"):
+        authorizer.authorize(
+            envelope,
+            capability="payment:send",
+            target="tool:payments",
+            payload={"vendor": "7"},
+            require_governance=True,
+        )
+
+    governed = envelope.model_copy(
+        update={
+            "mandate": envelope.mandate.model_copy(
+                update={
+                    "purpose": "Pay an approved supplier invoice",
+                    "accountable_owner": "role:finance-controller",
+                    "exclusions": ["payment:send"],
+                }
+            )
+        }
+    )
+    with pytest.raises(swarmauth.CapabilityViolationError, match="excluded"):
+        authorizer.authorize(
+            governed,
+            capability="payment:send",
+            target="tool:payments",
+            payload={"vendor": "7"},
+            require_governance=True,
+        )
+
+
+def test_final_consequence_checks_amount_and_hashes_before_consuming() -> None:
+    envelope, gate = _approved_envelope()
+    envelope = envelope.model_copy(
+        update={"constraints": envelope.constraints.model_copy(update={"max_amount_usd": 25.0})}
+    )
+    authorizer = swarmauth.FinalConsequenceAuthorizer(approval_verifier=gate.verify_evidence)
+    with pytest.raises(swarmauth.ConstraintViolationError, match="canonical JSON"):
+        authorizer.authorize(
+            envelope,
+            capability="payment:send",
+            target="tool:payments",
+            payload={"vendor": "7", "amount": float("nan")},
+            amount=10,
+            require_approval=True,
+        )
+    with pytest.raises(swarmauth.ConstraintViolationError, match="ceiling"):
+        authorizer.authorize(
+            envelope,
+            capability="payment:send",
+            target="tool:payments",
+            payload={"vendor": "7", "amount": 30},
+            amount=30,
+            require_approval=True,
+        )
+    decision = authorizer.authorize(
+        envelope,
+        capability="payment:send",
+        target="tool:payments",
+        payload={"vendor": "7", "amount": 25},
+        amount=25,
+        require_approval=True,
+    )
+    assert decision.authorization_id == "authorization-1"
+
+
+def test_revoked_parent_cannot_mint_or_link_a_live_child() -> None:
+    root_keys = swarmauth.KeyPair.generate()
+    child_keys = swarmauth.KeyPair.generate()
+    store = swarmauth.InMemoryDelegationRevocationStore()
+    parent = swarmauth.TokenIssuer(root_keys).issue(
+        iss="agent:root",
+        sub="tool:x",
+        capabilities=["tool:x"],
+        dlg="agent:worker",
+    )
+    _, parent_claims, _ = swarmauth.CapabilityToken.parse(parent)
+    store.revoke_tree(parent_claims.jti, expires_at=parent_claims.exp)
+    with pytest.raises(swarmauth.TokenRevokedError):
+        swarmauth.TokenIssuer(child_keys).attenuate(
+            parent,
+            iss="agent:worker",
+            capabilities=["tool:x"],
+            revocation_store=store,
+        )
+
+    store.link(parent_claims.jti, "late-child", child_expires_at=parent_claims.exp)
+    assert store.is_revoked("late-child")
+
+
+def test_execution_identity_rejects_stale_and_future_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("swarmauth.identity.time.time", lambda: 1_000)
+    verifier = swarmauth.CallbackIdentityVerifier(
+        lambda item: {"agent_id": item.agent_id, "key_id": item.key_id},
+        max_age_seconds=60,
+        future_skew_seconds=5,
+    )
+    for issued_at in (939, 1_006):
+        evidence = swarmauth.ExecutionIdentityEvidence(
+            format="test",
+            agent_id="agent:a",
+            key_id="key:1",
+            nonce="nonce",
+            issued_at=issued_at,
+            evidence={},
+        )
+        with pytest.raises(ValueError):
+            verifier.verify(evidence, expected_nonce="nonce")

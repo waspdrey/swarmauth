@@ -63,13 +63,34 @@ class InMemoryDelegationRevocationStore(InMemoryRevocationStore):
 
     def link(self, parent_jti: str, child_jti: str, *, child_expires_at: int) -> None:
         with self._lock:
+            now = time.time()
+            self._purge_expired_unlocked(now)
+            self._purge_links_unlocked(now)
             self._children.setdefault(parent_jti, {})[child_jti] = child_expires_at
+            if parent_jti in self._revoked and child_expires_at > now:
+                self._revoked[child_jti] = child_expires_at
+
+    def _purge_links_unlocked(self, now: float) -> None:
+        for parent, children in list(self._children.items()):
+            live = {child: expiry for child, expiry in children.items() if expiry > now}
+            if live:
+                self._children[parent] = live
+            else:
+                del self._children[parent]
+
+    def is_revoked(self, jti: str) -> bool:
+        now = time.time()
+        with self._lock:
+            self._purge_expired_unlocked(now)
+            self._purge_links_unlocked(now)
+            return jti in self._revoked
 
     def revoke_tree(self, jti: str, *, expires_at: int) -> None:
         """Revoke one authorization and all registered descendants atomically."""
         now = time.time()
         with self._lock:
             self._purge_expired_unlocked(now)
+            self._purge_links_unlocked(now)
             pending = [(jti, expires_at)]
             seen: set[str] = set()
             while pending:

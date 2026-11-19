@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import threading
 import time
 from typing import Any, Callable, Mapping, Optional
@@ -14,11 +15,13 @@ from swarmauth.envelope import AuthorizationEnvelope
 from swarmauth.exceptions import CapabilityViolationError, ConstraintViolationError, TokenExpiredError, TokenRevokedError
 from swarmauth.identity import ExecutionIdentityEvidence, ExecutionIdentityVerifier, VerifiedExecutionIdentity
 from swarmauth.revocation import RevocationStore
-from swarmauth.token import capability_covered
+from swarmauth.token import capability_covered, strict_value_equal
 
 
 def _payload_hash(value: Mapping[str, Any]) -> str:
-    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    raw = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -38,17 +41,21 @@ class InMemoryConsequenceStore:
     """Atomic single-action consumption for approval-bound authorizations."""
 
     def __init__(self) -> None:
-        self._consumed: set[str] = set()
+        self._consumed: dict[str, int] = {}
         self._lock = threading.Lock()
 
-    def consume(self, authorization_id: str) -> None:
+    def consume(self, authorization_id: str, *, expires_at: int) -> None:
         with self._lock:
+            now = time.time()
+            self._consumed = {
+                key: expiry for key, expiry in self._consumed.items() if expiry > now
+            }
             if authorization_id in self._consumed:
                 raise ConstraintViolationError(
                     "authorization was already consumed at a consequence boundary",
                     constraint="single_action",
                 )
-            self._consumed.add(authorization_id)
+            self._consumed[authorization_id] = expires_at
 
 
 class FinalConsequenceAuthorizer:
@@ -74,13 +81,22 @@ class FinalConsequenceAuthorizer:
         capability: str,
         target: str,
         payload: Mapping[str, Any],
+        amount: Optional[float] = None,
         challenge_nonce: Optional[str] = None,
         identity_evidence: Optional[ExecutionIdentityEvidence] = None,
         expected_resource_version: Optional[str] = None,
         actual_resource_version: Optional[str] = None,
         require_approval: bool = False,
+        require_governance: bool = False,
         now: Optional[int] = None,
     ) -> FinalConsequenceDecision:
+        try:
+            payload_digest = _payload_hash(payload)
+        except (TypeError, ValueError) as exc:
+            raise ConstraintViolationError(
+                "final payload must be finite canonical JSON",
+                constraint="payload",
+            ) from exc
         current = int(time.time()) if now is None else now
         validity = envelope.validity
         if current < validity.issued_at or current > validity.expires_at:
@@ -98,11 +114,37 @@ class FinalConsequenceAuthorizer:
                 required=capability,
                 granted=envelope.mandate.capabilities,
             )
+        if any(capability_covered(capability, [excluded]) for excluded in envelope.mandate.exclusions):
+            raise CapabilityViolationError(
+                f"final capability '{capability}' is explicitly excluded by the mandate",
+                required=capability,
+                granted=envelope.mandate.capabilities,
+            )
+        if require_governance and (
+            envelope.mandate.purpose is None or envelope.mandate.accountable_owner is None
+        ):
+            raise ConstraintViolationError(
+                "governed consequences require purpose and accountable_owner",
+                constraint="governance_context",
+            )
         for key, expected in envelope.constraints.allowed_params.items():
-            if payload.get(key) != expected:
+            if key not in payload or not strict_value_equal(payload[key], expected):
                 raise ConstraintViolationError(
                     f"final payload parameter '{key}' does not match the authorized value",
                     constraint="allowed_params",
+                )
+        amount_ceiling = envelope.constraints.max_amount_usd
+        if amount_ceiling is not None:
+            if amount is None or isinstance(amount, bool) or not isinstance(amount, (int, float)):
+                raise ConstraintViolationError(
+                    "final consequence requires a finite non-negative amount",
+                    constraint="max_amount_usd",
+                )
+            parsed_amount = float(amount)
+            if not math.isfinite(parsed_amount) or parsed_amount < 0 or parsed_amount > amount_ceiling:
+                raise ConstraintViolationError(
+                    f"final amount {amount!r} exceeds or violates the authorized ceiling",
+                    constraint="max_amount_usd",
                 )
         if expected_resource_version is not None and actual_resource_version != expected_resource_version:
             raise ConstraintViolationError(
@@ -118,6 +160,15 @@ class FinalConsequenceAuthorizer:
                 raise ConstraintViolationError(
                     "approval evidence is not trusted by the consequence boundary",
                     constraint="approval",
+                )
+            if (
+                approval.capability != capability
+                or approval.subject != target
+                or approval.requester != envelope.mandate.issuer
+            ):
+                raise ConstraintViolationError(
+                    "approval evidence does not match the final mandate",
+                    constraint="approval_binding",
                 )
             if envelope.constraints.max_calls != 1:
                 raise ConstraintViolationError(
@@ -140,12 +191,12 @@ class FinalConsequenceAuthorizer:
                 )
 
         if require_approval:
-            self._consequences.consume(validity.authorization_id)
+            self._consequences.consume(validity.authorization_id, expires_at=validity.expires_at)
 
         return FinalConsequenceDecision(
             authorization_id=validity.authorization_id,
             envelope_hash=envelope.digest(),
-            payload_hash=_payload_hash(payload),
+            payload_hash=payload_digest,
             target=target,
             capability=capability,
             resource_version=actual_resource_version,

@@ -43,7 +43,9 @@ class ApprovalPayload(TypedDict):
 
 
 def _canonical_json(value: Mapping[str, object]) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
 
 
 def _sha256(value: Mapping[str, object]) -> str:
@@ -60,6 +62,9 @@ class ApprovalEvidence(BaseModel):
 
     version: str = "1.0"
     request_id: str
+    capability: str
+    subject: str
+    requester: str
     request_hash: str = Field(..., pattern=r"^[0-9a-f]{64}$")
     decision: str = Field(..., pattern=r"^(approved|rejected)$")
     approver: str
@@ -123,6 +128,9 @@ class ApprovalRequest:
         }
         return ApprovalEvidence(
             request_id=self.request_id,
+            capability=self.capability,
+            subject=self.subject,
+            requester=self.requester,
             request_hash=request_hash,
             decision=self.status,
             approver=self.approver,
@@ -523,9 +531,7 @@ class ApprovalGatekeeper:
             expected = request.evidence()
         except ApprovalStateError:
             return False
-        return hmac.compare_digest(expected.request_hash, evidence.request_hash) and hmac.compare_digest(
-            expected.decision_hash, evidence.decision_hash
-        )
+        return hmac.compare_digest(_canonical_json(expected.as_dict()), _canonical_json(evidence.as_dict()))
 
     def _link(self, request: ApprovalRequest, decision: str) -> str:
         payload = {"rid": request.request_id, "decision": decision, "exp": request.expires_at, "nonce": secrets.token_urlsafe(8)}

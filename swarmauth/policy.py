@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Optional, Sequence
 
 from swarmauth.exceptions import PolicyViolationError
-from swarmauth.token import MAX_TTL_SECONDS, Constraints, capability_covered, limit_is_wider
+from swarmauth.token import MAX_TTL_SECONDS, Constraints, capability_covered, limit_is_wider, strict_value_equal
 
 
 @dataclass(frozen=True)
@@ -117,7 +117,7 @@ def _grant_denies(
     if limit_is_wider(constraints.rate_limit_per_min, grant.rate_limit_per_min):
         return "rate_limit_per_min exceeds the grant ceiling"
     for key, expected in grant.pinned_params.items():
-        if constraints.allowed_params.get(key) != expected:
+        if key not in constraints.allowed_params or not strict_value_equal(constraints.allowed_params[key], expected):
             return f"Issued token does not pin '{key}' to {expected!r}"
     if dlg is not None and dlg not in grant.delegates:
         return f"Grant does not allow delegation to '{dlg}'"

@@ -5,14 +5,16 @@ import hashlib
 import json
 from typing import Any, Mapping, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from swarmauth.approvals import ApprovalEvidence
 from swarmauth.token import CapabilityClaims, Constraints
 
 
 def _canonical_json(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
 
 
 class AuthorizationMandate(BaseModel):
@@ -21,10 +23,22 @@ class AuthorizationMandate(BaseModel):
     issuer: str
     subject: str
     capabilities: list[str] = Field(..., min_length=1)
+    purpose: Optional[str] = Field(default=None, min_length=1)
+    exclusions: list[str] = Field(default_factory=list)
+    accountable_owner: Optional[str] = Field(default=None, min_length=1)
     delegate: Optional[str] = None
     parent_token_hash: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @field_validator("exclusions")
+    @classmethod
+    def _validate_exclusions(cls, value: list[str]) -> list[str]:
+        if any(not exclusion for exclusion in value):
+            raise ValueError("mandate exclusions must be non-empty capability patterns")
+        if len(value) != len(set(value)):
+            raise ValueError("mandate exclusions must not contain duplicates")
+        return value
 
 
 class AuthorizationValidity(BaseModel):
@@ -56,7 +70,13 @@ class AuthorizationEnvelope(BaseModel):
 
     @classmethod
     def from_claims(
-        cls, claims: CapabilityClaims, *, approval_evidence: Optional[ApprovalEvidence] = None
+        cls,
+        claims: CapabilityClaims,
+        *,
+        approval_evidence: Optional[ApprovalEvidence] = None,
+        purpose: Optional[str] = None,
+        exclusions: Optional[list[str]] = None,
+        accountable_owner: Optional[str] = None,
     ) -> "AuthorizationEnvelope":
         parent_hash = hashlib.sha256(claims.prf.encode("ascii")).hexdigest() if claims.prf else None
         return cls(
@@ -64,6 +84,9 @@ class AuthorizationEnvelope(BaseModel):
                 issuer=claims.iss,
                 subject=claims.sub,
                 capabilities=list(claims.capabilities),
+                purpose=purpose,
+                exclusions=list(exclusions or []),
+                accountable_owner=accountable_owner,
                 delegate=claims.dlg,
                 parent_token_hash=parent_hash,
             ),

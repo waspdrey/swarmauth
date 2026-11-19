@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any, Literal, Mapping, Optional, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from swarmauth.crypto import KeyPair, b64url_decode, b64url_encode, generate_jti, verify_signature
 from swarmauth.events import AuthorizationDecision
@@ -14,10 +14,13 @@ from swarmauth.exceptions import InvalidSignatureError, MalformedTokenError
 
 RECEIPT_TYPE = "SAR"
 RECEIPT_ALG = "EdDSA"
+EvidenceKind = Literal["agent_self_report", "platform_runtime_record", "externally_verifiable"]
 
 
 def _canonical_json(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    ).encode("utf-8")
 
 
 def receipt_hash(receipt: str) -> str:
@@ -32,12 +35,29 @@ class ReceiptClaims(BaseModel):
     issuer: str
     issued_at: int
     subject: Optional[str] = None
+    purpose: Optional[str] = Field(default=None, min_length=1)
+    accountable_owner: Optional[str] = Field(default=None, min_length=1)
+    evidence_kind: EvidenceKind = "platform_runtime_record"
     envelope_hash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     approval_hash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     decision_receipt_hash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     data: dict[str, Any]
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    @model_validator(mode="after")
+    def _type_specific_shape(self) -> "ReceiptClaims":
+        if self.receipt_type == "authorization_decision":
+            if self.decision_receipt_hash is not None:
+                raise ValueError("decision receipts cannot reference another decision receipt")
+            if self.data.get("outcome") not in {"allow", "deny"}:
+                raise ValueError("decision receipt data requires an allow/deny outcome")
+        else:
+            if self.decision_receipt_hash is None:
+                raise ValueError("outcome receipts must reference their decision receipt")
+            if self.data.get("status") not in {"succeeded", "failed", "cancelled"}:
+                raise ValueError("outcome receipt data has an invalid status")
+        return self
 
 
 class ReceiptSink(Protocol):
@@ -85,6 +105,9 @@ def issue_decision_receipt(
     issuer: str,
     envelope_hash: Optional[str] = None,
     approval_hash: Optional[str] = None,
+    purpose: Optional[str] = None,
+    accountable_owner: Optional[str] = None,
+    evidence_kind: EvidenceKind = "platform_runtime_record",
     now: Optional[int] = None,
 ) -> str:
     """Sign an allow/deny decision without embedding its bearer credential."""
@@ -95,6 +118,9 @@ def issue_decision_receipt(
         subject=decision.subject,
         envelope_hash=envelope_hash,
         approval_hash=approval_hash,
+        purpose=purpose,
+        accountable_owner=accountable_owner,
+        evidence_kind=evidence_kind,
         data=decision.as_dict(),
     )
     return SignedReceipt.issue(signer=signer, claims=claims)
@@ -108,6 +134,9 @@ def issue_outcome_receipt(
     status: Literal["succeeded", "failed", "cancelled"],
     metadata: Optional[Mapping[str, Any]] = None,
     subject: Optional[str] = None,
+    purpose: Optional[str] = None,
+    accountable_owner: Optional[str] = None,
+    evidence_kind: EvidenceKind = "platform_runtime_record",
     now: Optional[int] = None,
 ) -> str:
     """Sign an execution outcome and cryptographically link it to its decision."""
@@ -116,6 +145,9 @@ def issue_outcome_receipt(
         issuer=issuer,
         issued_at=int(time.time()) if now is None else now,
         subject=subject,
+        purpose=purpose,
+        accountable_owner=accountable_owner,
+        evidence_kind=evidence_kind,
         decision_receipt_hash=receipt_hash(decision_receipt),
         data={"status": status, "metadata": dict(metadata or {})},
     )

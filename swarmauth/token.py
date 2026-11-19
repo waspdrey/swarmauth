@@ -57,6 +57,32 @@ class Constraints(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    @field_validator("allowed_params")
+    @classmethod
+    def _allowed_params_are_canonical_json(cls, value: dict[str, Any]) -> dict[str, Any]:
+        _require_canonical_json_value(value, path="allowed_params")
+        return value
+
+
+def _require_canonical_json_value(value: Any, *, path: str) -> None:
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{path} contains a non-finite number")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _require_canonical_json_value(item, path=f"{path}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"{path} contains a non-string object key")
+            _require_canonical_json_value(item, path=f"{path}.{key}")
+        return
+    raise ValueError(f"{path} contains a value that is not canonical JSON")
+
 
 class CapabilityClaims(BaseModel):
     """The signed payload of a Capability Token."""
@@ -138,6 +164,26 @@ def limit_is_wider(child: Optional[float], parent: Optional[float]) -> bool:
     if child is None or not math.isfinite(child):
         return True
     return child > parent
+
+
+def strict_value_equal(actual: Any, expected: Any) -> bool:
+    """JSON-like equality that does not treat booleans as integers.
+
+    Python considers ``True == 1`` and ``False == 0``. Authorization
+    constraints must preserve JSON types so a pinned numeric or boolean value
+    cannot be substituted for the other.
+    """
+    if type(actual) is not type(expected):
+        return False
+    if isinstance(expected, dict):
+        return actual.keys() == expected.keys() and all(
+            strict_value_equal(actual[key], value) for key, value in expected.items()
+        )
+    if isinstance(expected, (list, tuple)):
+        return len(actual) == len(expected) and all(
+            strict_value_equal(left, right) for left, right in zip(actual, expected, strict=True)
+        )
+    return bool(actual == expected)
 
 
 def _require_ttl(ttl_seconds: int) -> None:
@@ -251,7 +297,7 @@ def _assert_constraints_not_wider(parent: Constraints, child: Constraints) -> No
         if limit_is_wider(child_limit, parent_limit):
             raise DelegationError(f"Attenuated {name} widens the parent limit")
     for key, expected in parent.allowed_params.items():
-        if child.allowed_params.get(key) != expected:
+        if key not in child.allowed_params or not strict_value_equal(child.allowed_params[key], expected):
             raise DelegationError(f"Attenuated token drops or changes pinned parameter '{key}'")
 
 
@@ -452,7 +498,7 @@ def check_params(claims: CapabilityClaims, params: dict[str, Any]) -> None:
     """Enforce the constraints.allowed_params exact-match allowlist, if present."""
     allowed = claims.constraints.allowed_params
     for key, expected in allowed.items():
-        if params.get(key) != expected:
+        if key not in params or not strict_value_equal(params[key], expected):
             raise ConstraintViolationError(
                 f"Parameter '{key}'={params.get(key)!r} does not match required value {expected!r}",
                 constraint="allowed_params",
